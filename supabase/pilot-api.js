@@ -153,6 +153,22 @@
     if (typeof window.showScreen === 'function') window.showScreen('home', 'Швейное производство', 'Supabase · пилот');
   }
 
+  function sendMagicLink(email) {
+    if (!email) return Promise.resolve({ success: false, message: 'Введите email' });
+    var redirectUrl = window.location.origin + window.location.pathname;
+    return loadConfig().then(function (loaded) {
+      config = loaded;
+      return request('/auth/v1/otp?redirect_to=' + encodeURIComponent(redirectUrl), {
+        method: 'POST',
+        body: JSON.stringify({ email: email, create_user: false })
+      });
+    }).then(function () {
+      return { success: true, message: 'Ссылка для входа отправлена на ' + email };
+    }).catch(function (error) {
+      return { success: false, message: error.message };
+    });
+  }
+
   function restoreSavedLogin() {
     if (sessionFromHash()) return;
     var saved = sessionStorage.getItem('supabasePilotSession');
@@ -322,6 +338,20 @@
     pin.placeholder = 'Пароль';
     pin.autocomplete = 'current-password';
     label.textContent = 'Тестовый вход Supabase';
+    var loginButton = pin.parentNode.querySelector('button');
+    var magicButton = document.createElement('button');
+    magicButton.type = 'button';
+    magicButton.className = 'action-btn btn-secondary';
+    magicButton.textContent = '✉️ Получить ссылку для входа';
+    magicButton.addEventListener('click', function () {
+      var address = email.value.trim();
+      magicButton.disabled = true;
+      sendMagicLink(address).then(function (result) {
+        magicButton.disabled = false;
+        if (typeof window.showToast === 'function') window.showToast(result.message, !result.success);
+      });
+    });
+    if (loginButton) loginButton.insertAdjacentElement('afterend', magicButton);
     var badge = document.createElement('div');
     badge.textContent = '⚡ SUPABASE PILOT';
     badge.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:9999;background:#0f766e;color:#fff;padding:6px 10px;border-radius:12px;font:700 11px system-ui;';
