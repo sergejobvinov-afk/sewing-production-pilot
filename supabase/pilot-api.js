@@ -292,6 +292,16 @@
     getDashboardData: function () {
       return rpc('get_dashboard_data', {}).then(unwrapRpc);
     },
+    getCatalogAdmin: function () {
+      return rpc('get_catalog_admin', {}).then(unwrapRpc);
+    },
+    saveCatalogOperation: function (item) {
+      return rpc('save_catalog_operation', { p_id: item.id || null, p_model: item.model, p_operation_name: item.operationName,
+        p_sequence_no: Number(item.sequenceNo), p_sewer_price: Number(item.sewerPrice), p_client_price: Number(item.clientPrice), p_active: item.active !== false }).then(unwrapRpc);
+    },
+    copyCatalogModel: function (sourceModel, newModel) {
+      return rpc('copy_catalog_model', { p_source_model: sourceModel, p_new_model: newModel }).then(unwrapRpc);
+    },
     getPaymentOperations: function () {
       return rpc('get_payment_operations', {}).then(unwrapRpc);
     },

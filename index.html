@@ -949,6 +949,24 @@ var QRGen=(function(){
       </div>
     </div>
 
+    <!-- ===== CATALOG SCREEN (admin only) ===== -->
+    <div class="screen" id="screen-catalog">
+      <div class="card" style="padding:12px;">
+        <h3 style="margin-top:0;">➕ Новая операция или модель</h3>
+        <input id="catalog-new-model" type="text" placeholder="Название модели">
+        <input id="catalog-new-operation" type="text" placeholder="Название операции">
+        <div style="display:grid;grid-template-columns:80px 1fr 1fr;gap:8px;">
+          <input id="catalog-new-sequence" type="number" min="0" value="0" aria-label="Порядок">
+          <input id="catalog-new-sewer-price" type="number" min="0" step="0.01" placeholder="Цена швее">
+          <input id="catalog-new-client-price" type="number" min="0" step="0.01" placeholder="Цена заказчику">
+        </div>
+        <button class="action-btn btn-success" onclick="addCatalogOperation()">✅ Добавить операцию</button>
+      </div>
+      <input id="catalog-search" type="text" placeholder="Поиск модели или операции" oninput="renderCatalogAdmin()">
+      <div id="catalog-list"></div>
+      <div class="loading" id="catalog-loading"><div class="spinner"></div><div>Загрузка...</div></div>
+    </div>
+
     <!-- ===== USERS SCREEN (admin only) ===== -->
     <div class="screen" id="screen-users">
       <div class="card" id="users-add-card">
@@ -992,7 +1010,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-  <script src="supabase/pilot-api.js?v=bulk-packs-1"></script>
+  <script src="supabase/pilot-api.js?v=catalog-admin-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1236,6 +1254,7 @@ function submitAcceptWithOps() {
         btns += menuBtn('btn-status', '💳', 'Оплата операций', 'Массовая оплата швеям и от заказчика', 'openPayments()');
       }
       if (role === 'admin') {
+        btns += menuBtn('', '🧾', 'Модели и расценки', 'Операции, цены и порядок', 'openCatalogAdmin()');
         btns += menuBtn('', '👥', 'Пользователи', 'Управление доступом', 'openUsers()');
       }
       
@@ -2109,6 +2128,49 @@ function openDashboard(){
           console.error('QR generation error:',e);
         }
       }
+    }
+
+    // ===== CATALOG MANAGEMENT =====
+    var catalogAdminCache=[];
+    function openCatalogAdmin(){
+      showScreen('catalog','🧾 Модели и расценки','Только для администратора');showLoading('catalog',true);
+      API.getCatalogAdmin().then(function(r){showLoading('catalog',false);if(!r||!r.success){showToast((r&&r.message)||'Нет доступа',true);return;}catalogAdminCache=r.operations||[];renderCatalogAdmin();})
+        .catch(function(e){showLoading('catalog',false);showToast('Ошибка: '+e.message,true);});
+    }
+    function renderCatalogAdmin(){
+      var q=(document.getElementById('catalog-search').value||'').trim().toLowerCase(),groups={};
+      catalogAdminCache.forEach(function(op){if(q&&(op.model+' '+op.operationName).toLowerCase().indexOf(q)<0)return;(groups[op.model]||(groups[op.model]=[])).push(op);});
+      var h='';Object.keys(groups).sort().forEach(function(model){
+        h+='<details class="card" '+(q?'open':'')+'><summary style="font-weight:700;font-size:16px;cursor:pointer;padding:6px 0;">'+escapeHtml(model)+' · '+groups[model].length+' оп.</summary>';
+        h+='<button class="action-btn btn-secondary" style="padding:7px;margin:6px 0;" onclick="copyCatalogModelByName(decodeURIComponent(\''+encodeURIComponent(model).replace(/\'/g,'%27')+'\'))">📋 Копировать модель</button>';
+        groups[model].forEach(function(op){var idx=catalogAdminCache.indexOf(op);h+='<div style="border-top:1px solid #eee;padding:10px 0;">';
+          h+='<div style="font-weight:600;">'+escapeHtml(op.operationName)+'</div><div style="display:grid;grid-template-columns:70px 1fr 1fr;gap:6px;margin-top:6px;">';
+          h+='<input class="catalog-seq" data-idx="'+idx+'" type="number" min="0" value="'+escapeHtml(op.sequenceNo)+'" aria-label="Порядок">';
+          h+='<input class="catalog-sewer-price" data-idx="'+idx+'" type="number" min="0" step="0.01" value="'+escapeHtml(op.sewerPrice)+'" aria-label="Цена швее">';
+          h+='<input class="catalog-client-price" data-idx="'+idx+'" type="number" min="0" step="0.01" value="'+escapeHtml(op.clientPrice)+'" aria-label="Цена заказчику"></div>';
+          h+='<label style="display:flex;align-items:center;gap:7px;margin-top:7px;"><input class="catalog-active" data-idx="'+idx+'" type="checkbox" '+(op.active?'checked':'')+' style="width:22px;height:22px;"> Активна</label>';
+          h+='<button class="action-btn btn-primary" style="padding:7px;margin-top:7px;" onclick="saveCatalogRow('+idx+')">Сохранить</button></div>';
+        });h+='</details>';
+      });document.getElementById('catalog-list').innerHTML=h||'<div class="card">Ничего не найдено.</div>';
+    }
+    function addCatalogOperation(){
+      var item={model:document.getElementById('catalog-new-model').value.trim(),operationName:document.getElementById('catalog-new-operation').value.trim(),
+        sequenceNo:Number(document.getElementById('catalog-new-sequence').value),sewerPrice:Number(document.getElementById('catalog-new-sewer-price').value),clientPrice:Number(document.getElementById('catalog-new-client-price').value),active:true};
+      if(!item.model||!item.operationName||item.sequenceNo<0||item.sewerPrice<0||item.clientPrice<0){showToast('Проверьте название, порядок и цены',true);return;}
+      showLoading('catalog',true);API.saveCatalogOperation(item).then(function(r){showLoading('catalog',false);showToast(r.message,!r.success);if(r.success)openCatalogAdmin();})
+        .catch(function(e){showLoading('catalog',false);showToast('Ошибка: '+e.message,true);});
+    }
+    function saveCatalogRow(idx){
+      var op=catalogAdminCache[idx];if(!op)return;var item={id:op.id,model:op.model,operationName:op.operationName,
+        sequenceNo:Number(document.querySelector('.catalog-seq[data-idx="'+idx+'"]').value),sewerPrice:Number(document.querySelector('.catalog-sewer-price[data-idx="'+idx+'"]').value),
+        clientPrice:Number(document.querySelector('.catalog-client-price[data-idx="'+idx+'"]').value),active:document.querySelector('.catalog-active[data-idx="'+idx+'"]').checked};
+      showLoading('catalog',true);API.saveCatalogOperation(item).then(function(r){showLoading('catalog',false);showToast(r.message,!r.success);if(r.success)openCatalogAdmin();})
+        .catch(function(e){showLoading('catalog',false);showToast('Ошибка: '+e.message,true);});
+    }
+    function copyCatalogModelByName(source){
+      var name=window.prompt('Название новой модели:');if(name===null)return;name=name.trim();if(!name)return;
+      showLoading('catalog',true);API.copyCatalogModel(source,name).then(function(r){showLoading('catalog',false);showToast(r.message,!r.success);if(r.success)openCatalogAdmin();})
+        .catch(function(e){showLoading('catalog',false);showToast('Ошибка: '+e.message,true);});
     }
 
     // ===== USERS MANAGEMENT =====
