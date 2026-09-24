@@ -843,6 +843,33 @@ var QRGen=(function(){
       <button class="action-btn btn-secondary" onclick="openDashboard()" style="margin-top:8px;">🔄 Обновить</button>
     </div>
 
+    <!-- ===== PAYMENTS SCREEN ===== -->
+    <div class="screen" id="screen-payments">
+      <div class="card" style="padding:12px;">
+        <h3 style="margin-top:0;">💳 Массовая оплата операций</h3>
+        <input id="payments-search" type="text" placeholder="Паспорт, пачка, операция или швея" oninput="renderPaymentsList()">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
+          <select id="payments-sewer" onchange="renderPaymentsList()"><option value="">Все швеи</option></select>
+          <select id="payments-filter" onchange="renderPaymentsList()">
+            <option value="sewer_due">Не оплачено швее</option><option value="client_due">Не оплачено заказчиком</option>
+            <option value="all">Все операции</option><option value="sewer_paid">Оплачено швее</option><option value="client_paid">Оплачено заказчиком</option>
+          </select>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-weight:600;"><input id="payments-select-all" type="checkbox" onchange="toggleAllPayments(this.checked)" style="width:22px;height:22px;"> Выбрать все показанные</label>
+      </div>
+      <div id="payments-summary" class="card" style="padding:12px;"></div>
+      <div id="payments-list"></div>
+      <div class="card" style="position:sticky;bottom:8px;padding:10px;z-index:3;">
+        <button class="action-btn btn-success" onclick="bulkPayment('sewer',true)">✅ Оплачено швее</button>
+        <button class="action-btn btn-primary" onclick="bulkPayment('client',true)">💰 Оплачено заказчиком</button>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <button class="action-btn btn-secondary" onclick="bulkPayment('sewer',false)" style="font-size:12px;">Снять оплату швее</button>
+          <button class="action-btn btn-secondary" onclick="bulkPayment('client',false)" style="font-size:12px;">Снять оплату заказчика</button>
+        </div>
+      </div>
+      <div class="loading" id="payments-loading"><div class="spinner"></div><div>Обработка...</div></div>
+    </div>
+
     <!-- ===== ADD PACK SCREEN ===== -->
     <div class="screen" id="screen-addpack">
       <div class="card">
@@ -952,7 +979,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-  <script src="supabase/pilot-api.js?v=pin-fix-1"></script>
+  <script src="supabase/pilot-api.js?v=dual-payments-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1109,7 +1136,7 @@ function renderAcceptOperations(operations, packQty) {
 '</div>';
     html += '<div>Выдано: ' + issued + ' | Принято: ' + accepted + ' | Осталось: ' + remaining + '</div>';
     if (remaining > 0) {
-      html += '<div style="margin-top:6px;">Принять: <input type="number" class="accept-op-qty" data-op="' + idx + '" min="0" max="' + remaining + '" value="0" inputmode="numeric" style="width:80px;"> шт.</div>';
+      html += '<div style="margin-top:6px;">Принять: <input type="number" class="accept-op-qty" data-op="' + idx + '" min="0" max="' + remaining + '" value="" placeholder="' + remaining + '" inputmode="numeric" style="width:80px;"> шт.</div>';
     } else {
       html += '<div style="margin-top:6px;color:#4caf50;font-weight:600;">✓ Операция полностью принята</div>';
     }
@@ -1192,7 +1219,7 @@ function submitAcceptWithOps() {
       }
       if (role === 'admin' || role === 'accountant') {
         btns += menuBtn('btn-dashboard', '📊', 'Дашборд', 'Финансы, производство, швеи', 'openDashboard()');
-        btns += menuBtn('btn-status', '💳', 'Оплата операций', 'Найти пачку и отметить оплату', 'openStatusCheck()');
+        btns += menuBtn('btn-status', '💳', 'Оплата операций', 'Массовая оплата швеям и от заказчика', 'openPayments()');
       }
       if (role === 'admin') {
         btns += menuBtn('', '👥', 'Пользователи', 'Управление доступом', 'openUsers()');
@@ -1538,8 +1565,11 @@ function onQrScanned(target, rawQr){
           if(currentUser && currentUser.role !== 'master'){
             if(op.price) h+='<div style="font-size:13px;">Цена швеи: '+escapeHtml(op.price)+' ₽</div>';
             var unpaidQty=Math.max(0,Number(op.accepted)-Number(op.paidQty||0));
-            h+='<div style="font-size:13px;">Оплачено: '+escapeHtml(op.paidQty||0)+' | К оплате: '+escapeHtml(unpaidQty)+' шт.</div>';
-            if(op.paidAt)h+='<div style="font-size:12px;color:#4caf50;">Оплата: '+escapeHtml(formatDate(op.paidAt))+'</div>';
+            var clientUnpaidQty=Math.max(0,Number(op.accepted)-Number(op.clientPaidQty||0));
+            h+='<div style="font-size:13px;">Швее: оплачено '+escapeHtml(op.paidQty||0)+' | осталось '+escapeHtml(unpaidQty)+' шт.</div>';
+            h+='<div style="font-size:13px;">Заказчиком: оплачено '+escapeHtml(op.clientPaidQty||0)+' | осталось '+escapeHtml(clientUnpaidQty)+' шт.</div>';
+            if(op.paidAt)h+='<div style="font-size:12px;color:#4caf50;">Швее оплачено: '+escapeHtml(formatDate(op.paidAt))+'</div>';
+            if(op.clientPaidAt)h+='<div style="font-size:12px;color:#2196f3;">Заказчиком оплачено: '+escapeHtml(formatDate(op.clientPaidAt))+'</div>';
             if((currentUser.role==='admin'||currentUser.role==='accountant')&&typeof API.markOperationPaid==='function'){
               if(unpaidQty>0)h+='<button class="action-btn btn-success" style="padding:7px;margin-top:6px;" onclick="setOperationPayment('+opIndex+',true)">💳 Отметить оплачено</button>';
               if(Number(op.paidQty||0)>0)h+='<button class="action-btn btn-secondary" style="padding:7px;margin-top:6px;" onclick="setOperationPayment('+opIndex+',false)">↩️ Отменить оплату</button>';
@@ -1574,6 +1604,70 @@ function setOperationPayment(index,paid){
   var action=paid?API.markOperationPaid(packId,op.name):API.unmarkOperationPaid(packId,op.name);
   action.then(function(r){showLoading('status',false);showToast(r.message,!r.success);if(r.success)checkStatus(packId);})
     .catch(function(e){showLoading('status',false);showToast('Ошибка: '+e.message,true);});
+}
+
+var paymentOperationsCache=[];
+function openPayments(){
+  showScreen('payments','💳 Оплата операций','Массовая обработка');
+  showLoading('payments',true);
+  document.getElementById('payments-list').innerHTML='';
+  API.getPaymentOperations().then(function(r){
+    showLoading('payments',false);
+    if(!r||!r.success){showToast((r&&r.message)||'Не удалось загрузить операции',true);return;}
+    paymentOperationsCache=r.operations||[];
+    var sewers=Array.from(new Set(paymentOperationsCache.map(function(x){return x.sewerName;}).filter(Boolean))).sort();
+    var select=document.getElementById('payments-sewer');select.innerHTML='<option value="">Все швеи</option>';
+    sewers.forEach(function(name){var o=document.createElement('option');o.value=name;o.textContent=name;select.appendChild(o);});
+    renderPaymentsList();
+  }).catch(function(e){showLoading('payments',false);showToast('Ошибка: '+e.message,true);});
+}
+function filteredPaymentOperations(){
+  var q=(document.getElementById('payments-search').value||'').trim().toLowerCase();
+  var sewer=document.getElementById('payments-sewer').value;
+  var mode=document.getElementById('payments-filter').value;
+  return paymentOperationsCache.filter(function(op){
+    if(sewer&&op.sewerName!==sewer)return false;
+    var text=[op.packId,op.passport,op.model,op.operationName,op.sewerName].join(' ').toLowerCase();
+    if(q&&text.indexOf(q)<0)return false;
+    if(mode==='sewer_due')return Number(op.sewerPaidQty)<Number(op.acceptedQty);
+    if(mode==='client_due')return Number(op.clientPaidQty)<Number(op.acceptedQty);
+    if(mode==='sewer_paid')return Number(op.sewerPaidQty)>=Number(op.acceptedQty);
+    if(mode==='client_paid')return Number(op.clientPaidQty)>=Number(op.acceptedQty);
+    return true;
+  });
+}
+function renderPaymentsList(){
+  var list=filteredPaymentOperations(),sewerDue=0,clientDue=0,h='';
+  list.forEach(function(op){
+    sewerDue+=(Number(op.acceptedQty)-Number(op.sewerPaidQty))*Number(op.sewerPrice||0);
+    clientDue+=(Number(op.acceptedQty)-Number(op.clientPaidQty))*Number(op.clientPrice||0);
+    var key=encodeURIComponent(op.packId+'|'+op.operationName);
+    h+='<label class="card" style="display:flex;gap:10px;align-items:flex-start;margin-bottom:8px;cursor:pointer;">';
+    h+='<input type="checkbox" class="payment-row-check" data-key="'+key+'" style="width:24px;height:24px;flex:none;">';
+    h+='<div style="min-width:0;"><div style="font-weight:700;">'+escapeHtml(op.packId)+' · '+escapeHtml(op.operationName)+'</div>';
+    h+='<div style="font-size:13px;color:#666;">Паспорт: '+escapeHtml(op.passport||'—')+' · Швея: '+escapeHtml(op.sewerName)+'</div>';
+    h+='<div style="font-size:13px;">Принято: '+escapeHtml(op.acceptedQty)+' шт.</div>';
+    h+='<div style="font-size:12px;color:'+(Number(op.sewerPaidQty)>=Number(op.acceptedQty)?'#2e7d32':'#c62828')+';">Швее: '+escapeHtml(op.sewerPaidQty)+'/'+escapeHtml(op.acceptedQty)+' · '+escapeHtml(formatNum(Number(op.sewerPaidQty)*Number(op.sewerPrice||0)))+' ₽</div>';
+    h+='<div style="font-size:12px;color:'+(Number(op.clientPaidQty)>=Number(op.acceptedQty)?'#2e7d32':'#c62828')+';">Заказчиком: '+escapeHtml(op.clientPaidQty)+'/'+escapeHtml(op.acceptedQty)+' · '+escapeHtml(formatNum(Number(op.clientPaidQty)*Number(op.clientPrice||0)))+' ₽</div></div></label>';
+  });
+  document.getElementById('payments-list').innerHTML=h||'<div class="card">По выбранному фильтру операций нет.</div>';
+  document.getElementById('payments-summary').innerHTML='<strong>Показано: '+list.length+'</strong><br>К выплате швеям: '+formatNum(sewerDue)+' ₽<br>К оплате заказчиком: '+formatNum(clientDue)+' ₽';
+  document.getElementById('payments-select-all').checked=false;
+}
+function toggleAllPayments(checked){document.querySelectorAll('.payment-row-check').forEach(function(x){x.checked=checked;});}
+function selectedPaymentItems(){
+  var selected=[];
+  document.querySelectorAll('.payment-row-check:checked').forEach(function(x){
+    var parts=decodeURIComponent(x.getAttribute('data-key')).split('|');selected.push({packId:parts.shift(),operationName:parts.join('|')});
+  });return selected;
+}
+function bulkPayment(kind,paid){
+  var items=selectedPaymentItems();if(!items.length){showToast('Выберите хотя бы одну операцию',true);return;}
+  var who=kind==='sewer'?'швее':'заказчиком';
+  if(!window.confirm((paid?'Отметить оплату ':'Снять отметку оплаты ')+who+' для '+items.length+' операций?'))return;
+  showLoading('payments',true);
+  API.setOperationsPayment(items,kind,paid).then(function(r){showLoading('payments',false);showToast(r.message,!r.success);if(r.success)openPayments();})
+    .catch(function(e){showLoading('payments',false);showToast('Ошибка: '+e.message,true);});
 }
 
 function cancelCurrentIssue(){
@@ -1611,8 +1705,10 @@ function openDashboard(){
     var h='';
     h+='<div class="dash-section"><h3>💰 Финансы</h3><div class="dash-grid">';
     h+=dashItem(formatNum(d.finance.revenue)+' ₽','Выручка','');
+    h+=dashItem(formatNum(d.finance.clientDue||0)+' ₽','Долг заказчика','');
+    h+=dashItem(formatNum(d.finance.clientPaid||0)+' ₽','Оплачено заказчиком','');
     h+=dashItem(formatNum(d.finance.zp)+' ₽','К выплате','');
-    h+=dashItem(formatNum(d.finance.paidZp||0)+' ₽','Оплачено','');
+    h+=dashItem(formatNum(d.finance.paidZp||0)+' ₽','Оплачено швеям','');
     h+=dashItem(formatNum(d.finance.profit)+' ₽','Прибыль','profit');
     h+=dashItem(d.finance.margin+'%','Маржа','');
     h+='</div></div>';

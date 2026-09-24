@@ -81,7 +81,7 @@
   }
 
   function operationsForPack(packId) {
-    return table('pack_operations', 'select=operation_name,sewer_name,issued_qty,accepted_qty,paid_qty,paid_at,issued_at,accepted_at,sewer_price&pack_id=eq.' + encodeURIComponent(packId) + '&order=id.asc')
+    return table('pack_operations', 'select=operation_name,sewer_name,issued_qty,accepted_qty,paid_qty,paid_at,client_paid_qty,client_paid_at,issued_at,accepted_at,sewer_price&pack_id=eq.' + encodeURIComponent(packId) + '&order=id.asc')
       .then(function (rows) {
         return rows.map(function (op) {
           return {
@@ -91,6 +91,8 @@
             accepted: Number(op.accepted_qty) || 0,
             paidQty: Number(op.paid_qty) || 0,
             paidAt: op.paid_at || '',
+            clientPaidQty: Number(op.client_paid_qty) || 0,
+            clientPaidAt: op.client_paid_at || '',
             issuedDate: op.issued_at || '',
             acceptedDate: op.accepted_at || '',
             price: Number(op.sewer_price) || 0,
@@ -289,6 +291,12 @@
     },
     getDashboardData: function () {
       return rpc('get_dashboard_data', {}).then(unwrapRpc);
+    },
+    getPaymentOperations: function () {
+      return rpc('get_payment_operations', {}).then(unwrapRpc);
+    },
+    setOperationsPayment: function (items, kind, paid) {
+      return rpc('set_operations_payment', { p_items: items, p_kind: kind, p_paid: paid !== false }).then(unwrapRpc);
     },
     getSewerPacks: function () {
       return rpc('get_my_packs', {}).then(unwrapRpc);
