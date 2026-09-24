@@ -326,7 +326,7 @@
       return edge('manage-user', { action: 'create', name: name, login: login, pin: pin, role: role });
     },
     resetUserPin: function (profileId, pin) {
-      return edge('manage-user', { action: 'reset_pin', profileId: profileId, pin: pin });
+      return rpc('reset_user_pin', { p_profile_id: profileId, p_pin: pin }).then(unwrapRpc);
     },
     toggleUser: function (profileId) {
       return rpc('toggle_profile_active', { p_profile_id: profileId }).then(unwrapRpc);
