@@ -208,7 +208,7 @@
       var emailInput = document.getElementById('login-email');
       var email = emailInput ? emailInput.value.trim().toLowerCase() : '';
       if (email && email.indexOf('@') === -1) email += '@users.sewing.local';
-      if (!email || !password) return Promise.resolve({ success: false, message: 'Введите email и пароль тестового пользователя' });
+      if (!email || !password) return Promise.resolve({ success: false, message: 'Введите логин и пароль' });
       return loadConfig().then(function (loaded) {
         config = loaded;
         return request('/auth/v1/token?grant_type=password', {
@@ -353,7 +353,7 @@
     pin.removeAttribute('maxlength');
     pin.placeholder = 'Пароль';
     pin.autocomplete = 'current-password';
-    label.textContent = 'Тестовый вход Supabase';
+    label.textContent = 'Вход в рабочую систему';
     var loginButton = pin.parentNode.querySelector('button');
     var magicButton = document.createElement('button');
     magicButton.type = 'button';
