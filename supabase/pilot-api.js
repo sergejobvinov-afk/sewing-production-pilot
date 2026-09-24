@@ -269,9 +269,9 @@
     },
 
     getModelOperations: function (model) {
-      return table('operation_catalog', 'select=operation_name,sewer_price,client_price&active=eq.true&model=eq.' + encodeURIComponent(model) + '&order=sequence_no.asc,id.asc')
+      return table('operation_catalog', 'select=operation_name,sewer_price&active=eq.true&model=eq.' + encodeURIComponent(model) + '&order=sequence_no.asc,id.asc')
         .then(function (rows) {
-          return rows.map(function (row) { return { name: row.operation_name, price: Number(row.sewer_price), priceSewer: Number(row.sewer_price), priceClient: Number(row.client_price) }; });
+          return rows.map(function (row) { return { name: row.operation_name, price: Number(row.sewer_price), priceSewer: Number(row.sewer_price) }; });
         });
     },
 
