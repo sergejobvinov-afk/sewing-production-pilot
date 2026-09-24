@@ -952,7 +952,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-  <script src="supabase/pilot-api.js?v=user-admin-1"></script>
+  <script src="supabase/pilot-api.js?v=operation-payments-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1192,6 +1192,7 @@ function submitAcceptWithOps() {
       }
       if (role === 'admin' || role === 'accountant') {
         btns += menuBtn('btn-dashboard', '📊', 'Дашборд', 'Финансы, производство, швеи', 'openDashboard()');
+        btns += menuBtn('btn-status', '💳', 'Оплата операций', 'Найти пачку и отметить оплату', 'openStatusCheck()');
       }
       if (role === 'admin') {
         btns += menuBtn('', '👥', 'Пользователи', 'Управление доступом', 'openUsers()');
@@ -1503,6 +1504,7 @@ function onQrScanned(target, rawQr){
   switchScanMode('status','manual');
   tryCameraQuiet('status');
 }
+    var statusOperationsCache=[];
     function checkStatus(qr){
   currentQR['status']=qr;
   showLoading('status',true);document.getElementById('status-result').style.display='none';
@@ -1519,10 +1521,11 @@ function onQrScanned(target, rawQr){
 
       // Показываем операции
       if(r.operations && r.operations.length > 0){
+        statusOperationsCache=r.operations;
         h+='<div class="card"><h3>📜 Операции</h3>';
         var hasIssuedOperations=false;
         var hasAcceptedOperations=false;
-        r.operations.forEach(function(op){
+        r.operations.forEach(function(op,opIndex){
           if(Number(op.issued)>0) hasIssuedOperations=true;
           if(Number(op.accepted)>0) hasAcceptedOperations=true;
           h+='<div style="padding:8px 0;border-bottom:1px solid #f0f0f0;">';
@@ -1534,6 +1537,13 @@ function onQrScanned(target, rawQr){
           // Цену видит только не мастер
           if(currentUser && currentUser.role !== 'master'){
             if(op.price) h+='<div style="font-size:13px;">Цена швеи: '+escapeHtml(op.price)+' ₽</div>';
+            var unpaidQty=Math.max(0,Number(op.accepted)-Number(op.paidQty||0));
+            h+='<div style="font-size:13px;">Оплачено: '+escapeHtml(op.paidQty||0)+' | К оплате: '+escapeHtml(unpaidQty)+' шт.</div>';
+            if(op.paidAt)h+='<div style="font-size:12px;color:#4caf50;">Оплата: '+escapeHtml(formatDate(op.paidAt))+'</div>';
+            if((currentUser.role==='admin'||currentUser.role==='accountant')&&typeof API.markOperationPaid==='function'){
+              if(unpaidQty>0)h+='<button class="action-btn btn-success" style="padding:7px;margin-top:6px;" onclick="setOperationPayment('+opIndex+',true)">💳 Отметить оплачено</button>';
+              if(Number(op.paidQty||0)>0)h+='<button class="action-btn btn-secondary" style="padding:7px;margin-top:6px;" onclick="setOperationPayment('+opIndex+',false)">↩️ Отменить оплату</button>';
+            }
           }
           h+='</div>';
         });
@@ -1553,6 +1563,17 @@ function onQrScanned(target, rawQr){
     }else{showResultCard('status',false,r?r.message:'Ошибка');}
   })
   .catch(function(e){showLoading('status',false);showResultCard('status',false,'Ошибка: '+e.message);});
+}
+
+function setOperationPayment(index,paid){
+  var op=statusOperationsCache[index],packId=currentQR['status'];
+  if(!op||!packId)return;
+  var message=paid?'Отметить принятую часть операции «'+op.name+'» оплаченной?':'Снять отметку оплаты с операции «'+op.name+'»?';
+  if(!window.confirm(message))return;
+  showLoading('status',true);
+  var action=paid?API.markOperationPaid(packId,op.name):API.unmarkOperationPaid(packId,op.name);
+  action.then(function(r){showLoading('status',false);showToast(r.message,!r.success);if(r.success)checkStatus(packId);})
+    .catch(function(e){showLoading('status',false);showToast('Ошибка: '+e.message,true);});
 }
 
 function cancelCurrentIssue(){
@@ -1590,7 +1611,8 @@ function openDashboard(){
     var h='';
     h+='<div class="dash-section"><h3>💰 Финансы</h3><div class="dash-grid">';
     h+=dashItem(formatNum(d.finance.revenue)+' ₽','Выручка','');
-    h+=dashItem(formatNum(d.finance.zp)+' ₽','ЗП швей','');
+    h+=dashItem(formatNum(d.finance.zp)+' ₽','К выплате','');
+    h+=dashItem(formatNum(d.finance.paidZp||0)+' ₽','Оплачено','');
     h+=dashItem(formatNum(d.finance.profit)+' ₽','Прибыль','profit');
     h+=dashItem(d.finance.margin+'%','Маржа','');
     h+='</div></div>';
@@ -1612,7 +1634,7 @@ function openDashboard(){
     if(sk.length>0){
       h+='<div class="dash-section"><h3>👩‍🔧 Швеи</h3>';
       sk.sort(function(a,b){return d.sewers[b].zp-d.sewers[a].zp;});
-      sk.forEach(function(n){var s=d.sewers[n];h+='<div class="sewer-row"><div class="sewer-name">'+escapeHtml(n)+'</div><div class="sewer-stats"><div class="zp">'+escapeHtml(formatNum(s.zp))+' ₽</div><div>'+escapeHtml(s.items)+' шт.</div></div></div>';});
+      sk.forEach(function(n){var s=d.sewers[n];h+='<div class="sewer-row"><div class="sewer-name">'+escapeHtml(n)+'</div><div class="sewer-stats"><div class="zp">К выплате: '+escapeHtml(formatNum(s.zp))+' ₽</div><div>Оплачено: '+escapeHtml(formatNum(s.paid||0))+' ₽ · '+escapeHtml(s.items)+' шт.</div></div></div>';});
       h+='</div>';
     }
     document.getElementById('dashboard-content').innerHTML=h;
