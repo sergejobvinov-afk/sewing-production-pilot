@@ -55,6 +55,10 @@
     return request('/rest/v1/rpc/' + name, { method: 'POST', body: JSON.stringify(body || {}) });
   }
 
+  function edge(name, body) {
+    return request('/functions/v1/' + name, { method: 'POST', body: JSON.stringify(body || {}) });
+  }
+
   function unwrapRpc(result) {
     if (Array.isArray(result) && result.length === 1) return result[0];
     return result;
@@ -200,7 +204,8 @@
   var pilotApi = Object.assign({}, originalApi, {
     login: function (password) {
       var emailInput = document.getElementById('login-email');
-      var email = emailInput ? emailInput.value.trim() : '';
+      var email = emailInput ? emailInput.value.trim().toLowerCase() : '';
+      if (email && email.indexOf('@') === -1) email += '@users.sewing.local';
       if (!email || !password) return Promise.resolve({ success: false, message: 'Введите email и пароль тестового пользователя' });
       return loadConfig().then(function (loaded) {
         config = loaded;
@@ -309,8 +314,11 @@
     annulPackPassport: function (id, reason) {
       return rpc('annul_pack', { p_pack_id: id, p_reason: reason });
     },
-    addUser: function () {
-      return Promise.resolve({ success: false, message: 'Создайте пользователя в Supabase Auth, затем добавьте ему профиль. Секрет администратора нельзя хранить в приложении.' });
+    addUser: function (name, pin, role, unusedAdminPin, login) {
+      return edge('manage-user', { action: 'create', name: name, login: login, pin: pin, role: role });
+    },
+    resetUserPin: function (profileId, pin) {
+      return edge('manage-user', { action: 'reset_pin', profileId: profileId, pin: pin });
     },
     toggleUser: function (profileId) {
       return rpc('toggle_profile_active', { p_profile_id: profileId }).then(unwrapRpc);
@@ -328,7 +336,7 @@
     email.id = 'login-email';
     email.type = 'email';
     email.autocomplete = 'username';
-    email.placeholder = 'Email тестового пользователя';
+    email.placeholder = 'Email или логин';
     email.style.cssText = pin.style.cssText;
     email.style.marginBottom = '10px';
     pin.parentNode.insertBefore(email, pin);
@@ -356,10 +364,6 @@
     badge.textContent = '⚡ SUPABASE PILOT';
     badge.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:9999;background:#0f766e;color:#fff;padding:6px 10px;border-radius:12px;font:700 11px system-ui;';
     document.body.appendChild(badge);
-    var usersAddCard = document.getElementById('users-add-card');
-    if (usersAddCard) {
-      usersAddCard.innerHTML = '<h3>👥 Добавить пользователя</h3><div style="font-size:13px;color:#666;line-height:1.5;">Новые учётные записи создаются администратором через Supabase Auth. PIN-коды в пилоте не используются.</div>';
-    }
     finishMagicLinkLogin();
     restoreSavedLogin();
   });

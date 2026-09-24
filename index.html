@@ -913,10 +913,12 @@ var QRGen=(function(){
     <div class="screen" id="screen-users">
       <div class="card" id="users-add-card">
         <h3>👥 Добавить пользователя</h3>
+        <label for="user-login" style="font-size:13px;color:#666;font-weight:600;display:block;margin-bottom:6px;">Логин</label>
+        <input type="text" id="user-login" placeholder="Например: masha" autocomplete="off">
         <label for="user-name" style="font-size:13px;color:#666;font-weight:600;display:block;margin-bottom:6px;">Имя</label>
         <input type="text" id="user-name" placeholder="Имя пользователя">
         <label for="user-pin" style="font-size:13px;color:#666;font-weight:600;display:block;margin-top:12px;margin-bottom:6px;">PIN-код</label>
-        <input type="password" id="user-pin" placeholder="4 цифры" maxlength="4" inputmode="numeric" autocomplete="new-password">
+        <input type="password" id="user-pin" placeholder="6 цифр" maxlength="6" inputmode="numeric" autocomplete="new-password">
         <label for="user-role" style="font-size:13px;color:#666;font-weight:600;display:block;margin-top:12px;margin-bottom:6px;">Роль</label>
         <select id="user-role">
           <option value="">-- Выберите --</option>
@@ -950,7 +952,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-  <script src="supabase/pilot-api.js?v=role-privacy-1"></script>
+  <script src="supabase/pilot-api.js?v=user-admin-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -2009,26 +2011,33 @@ function formatDate(dateStr) {
           var name=document.createElement('div');name.className='sewer-name';name.textContent=u.name||'Без имени';
           if(!active){name.style.color='#777';name.style.textDecoration='line-through';}
           var meta=document.createElement('div');meta.style.cssText='font-size:12px;color:#666;';meta.textContent=badge;
+          if(u.login){var login=document.createElement('div');login.style.cssText='font-size:12px;color:#888;';login.textContent='Логин: '+u.login;info.appendChild(login);}
           info.append(name,meta);
+          var actions=document.createElement('div');actions.style.cssText='display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;';
+          var pinButton=document.createElement('button');pinButton.type='button';pinButton.textContent='Сменить PIN';
+          pinButton.style.cssText='min-height:44px;padding:8px 12px;border:1px solid #667eea;border-radius:8px;background:white;color:#3949ab;font-size:13px;font-weight:600;cursor:pointer;';
+          pinButton.addEventListener('click',function(){resetUserPinFn(u.pin,u.name);});actions.appendChild(pinButton);
           var button=document.createElement('button');button.type='button';button.textContent=active?'Выключить':'Включить';
           button.style.cssText='min-height:44px;padding:8px 14px;border:1px solid '+(active?'#e53935':'#43a047')+';border-radius:8px;background:white;color:'+(active?'#b71c1c':'#2e7d32')+';font-size:13px;font-weight:600;cursor:pointer;';
           button.addEventListener('click',function(){toggleUserFn(u.pin);});
-          row.append(info,button);list.appendChild(row);
+          actions.appendChild(button);row.append(info,actions);list.appendChild(row);
         });
       })
       .catch(function(e){showLoading('users',false);showToast('Ошибка: '+e.message,true);});
     }
     function submitAddUser(){
       var name=document.getElementById('user-name').value.trim();
+      var login=document.getElementById('user-login').value.trim().toLowerCase();
       var pin=document.getElementById('user-pin').value.trim();
       var role=document.getElementById('user-role').value;
+      if(!/^[a-z0-9._-]{3,32}$/.test(login)){showToast('Логин: 3–32 латинских символа или цифры',true);return;}
       if(!name){showToast('Введите имя',true);return;}
-      if(!/^\d{4}$/.test(pin)){showToast('PIN должен содержать ровно 4 цифры',true);return;}
+      if(!/^\d{6}$/.test(pin)){showToast('PIN должен содержать ровно 6 цифр',true);return;}
       if(!role){showToast('Выберите роль',true);return;}
-      API.addUser(name,pin,role,currentUser.pin)
+      API.addUser(name,pin,role,currentUser.pin,login)
       .then(function(r){
         showToast(r.message,!r.success);
-        if(r.success){document.getElementById('user-name').value='';document.getElementById('user-pin').value='';loadUsersList();}
+        if(r.success){document.getElementById('user-login').value='';document.getElementById('user-name').value='';document.getElementById('user-pin').value='';loadUsersList();}
       })
       .catch(function(e){showToast('Ошибка: '+e.message,true);});
     }
@@ -2038,6 +2047,12 @@ function formatDate(dateStr) {
         showToast(r.message,!r.success);if(r.success)loadUsersList();
       })
       .catch(function(e){showToast('Ошибка: '+e.message,true);});
+    }
+    function resetUserPinFn(profileId,name){
+      var pin=window.prompt('Новый шестизначный PIN для '+name+':');
+      if(pin===null)return;
+      if(!/^\d{6}$/.test(pin)){showToast('PIN должен содержать ровно 6 цифр',true);return;}
+      API.resetUserPin(profileId,pin).then(function(r){showToast(r.message,!r.success);}).catch(function(e){showToast('Ошибка: '+e.message,true);});
     }
 
     // ===== UTILITIES =====
