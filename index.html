@@ -890,6 +890,19 @@ var QRGen=(function(){
       <div class="loading" id="addpack-loading"><div class="spinner"></div><div>Создание...</div></div>
     </div>
 
+    <!-- ===== BULK PACK CREATION ===== -->
+    <div class="screen" id="screen-bulkpack">
+      <div class="card" style="padding:12px;">
+        <h3 style="margin-top:0;">📦 Массовое создание паспортов</h3>
+        <p style="font-size:13px;color:#666;">Добавьте строки кроя. ID и номера паспортов сформируются автоматически.</p>
+        <button class="action-btn btn-primary" onclick="addBulkPackRow()">➕ Добавить строку</button>
+      </div>
+      <div id="bulkpack-rows"></div>
+      <button id="bulkpack-submit" class="action-btn btn-success" onclick="submitBulkPacks()">✅ Создать все паспорта</button>
+      <div id="bulkpack-result"></div>
+      <div class="loading" id="bulkpack-loading"><div class="spinner"></div><div>Создание...</div></div>
+    </div>
+
     <!-- ===== PACKLIST SCREEN (База паспортов) ===== -->
     <div class="screen" id="screen-packlist">
       <div class="card" style="padding:12px;">
@@ -979,7 +992,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-  <script src="supabase/pilot-api.js?v=dual-payments-1"></script>
+  <script src="supabase/pilot-api.js?v=bulk-packs-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1212,6 +1225,7 @@ function submitAcceptWithOps() {
         btns += menuBtn('btn-accept', '📥', 'Принять ОТК', 'Сканировать QR и принять', 'openAccept()');
         btns += menuBtn('btn-status', '🔍', 'Статус пачки', 'Узнать статус по QR-коду', 'openStatusCheck()');
         btns += menuBtn('btn-addpack', '➕', 'Новая пачка', 'Добавить пачку + печать паспорта', 'openAddPack()');
+        btns += menuBtn('btn-addpack', '📦', 'Паспорта из кроя', 'Создать сразу несколько пачек', 'openBulkPack()');
         btns += menuBtn('btn-packlist', '📋', 'База паспортов', 'Все пачки + печать QR', 'openPackList()');
       }
       if (role === 'sewer') {
@@ -1776,6 +1790,49 @@ function openDashboard(){
         })
         .catch(function(e){showLoading('addpack',false);showToast('Ошибка: '+e.message,true);});
     }
+
+    var bulkPackModels=[];
+    function openBulkPack(){
+      showScreen('bulkpack','📦 Паспорта из кроя','Массовое создание');
+      document.getElementById('bulkpack-rows').innerHTML='';document.getElementById('bulkpack-result').innerHTML='';
+      showLoading('bulkpack',true);
+      API.getModelList().then(function(models){bulkPackModels=models||[];showLoading('bulkpack',false);addBulkPackRow();})
+        .catch(function(e){showLoading('bulkpack',false);showToast('Ошибка: '+e.message,true);});
+    }
+    function addBulkPackRow(){
+      var container=document.getElementById('bulkpack-rows');
+      if(container.children.length>=100){showToast('Не более 100 пачек за один раз',true);return;}
+      var row=document.createElement('div');row.className='card bulk-pack-row';row.style.padding='12px';
+      var top=document.createElement('div');top.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;';
+      var title=document.createElement('strong');title.textContent='Пачка '+(container.children.length+1);
+      var remove=document.createElement('button');remove.type='button';remove.textContent='✕';remove.setAttribute('aria-label','Удалить строку');remove.style.cssText='border:0;background:#ffebee;color:#c62828;border-radius:8px;min-width:44px;min-height:44px;font-size:18px;';
+      remove.onclick=function(){row.remove();renumberBulkPackRows();};top.append(title,remove);row.appendChild(top);
+      var date=document.createElement('input');date.type='date';date.className='bulk-cut-date';date.value=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
+      var model=document.createElement('select');model.className='bulk-model';var empty=document.createElement('option');empty.value='';empty.textContent='— Модель —';model.appendChild(empty);
+      bulkPackModels.forEach(function(name){var o=document.createElement('option');o.value=name;o.textContent=name;model.appendChild(o);});
+      var size=document.createElement('input');size.type='text';size.className='bulk-size';size.placeholder='Размер';
+      var color=document.createElement('input');color.type='text';color.className='bulk-color';color.placeholder='Цвет';
+      var qty=document.createElement('input');qty.type='number';qty.className='bulk-qty';qty.min='1';qty.inputMode='numeric';qty.placeholder='Количество';
+      [date,model,size,color,qty].forEach(function(el){el.style.marginBottom='8px';row.appendChild(el);});container.appendChild(row);
+    }
+    function renumberBulkPackRows(){document.querySelectorAll('.bulk-pack-row strong').forEach(function(x,i){x.textContent='Пачка '+(i+1);});}
+    function submitBulkPacks(){
+      var rows=[];var cards=document.querySelectorAll('.bulk-pack-row');
+      for(var i=0;i<cards.length;i++){
+        var item={cutDate:cards[i].querySelector('.bulk-cut-date').value,model:cards[i].querySelector('.bulk-model').value,
+          size:cards[i].querySelector('.bulk-size').value.trim(),color:cards[i].querySelector('.bulk-color').value.trim(),qty:Number(cards[i].querySelector('.bulk-qty').value)};
+        if(!item.cutDate||!item.model||!item.size||!item.qty||item.qty<=0){showToast('Заполните дату, модель, размер и количество в строке '+(i+1),true);return;}rows.push(item);
+      }
+      if(!rows.length){showToast('Добавьте хотя бы одну пачку',true);return;}
+      if(!window.confirm('Создать '+rows.length+' пачек и присвоить им новые номера?'))return;
+      showLoading('bulkpack',true);document.getElementById('bulkpack-submit').disabled=true;
+      API.addPacksBulk(rows).then(function(r){showLoading('bulkpack',false);document.getElementById('bulkpack-submit').disabled=false;
+        if(!r||!r.success){showToast((r&&r.message)||'Не удалось создать пачки',true);return;}
+        document.getElementById('bulkpack-result').innerHTML='<div class="result-card success"><div class="result-icon">✅</div><div>'+escapeHtml(r.message)+'</div><button class="action-btn btn-orange" onclick="renderMultiplePassports(bulkCreatedPacks)">🖨️ Печать созданных паспортов</button></div>';
+        bulkCreatedPacks=r.packs||[];document.getElementById('bulkpack-rows').innerHTML='';
+      }).catch(function(e){showLoading('bulkpack',false);document.getElementById('bulkpack-submit').disabled=false;showToast('Ошибка: '+e.message,true);});
+    }
+    var bulkCreatedPacks=[];
 
     // ===== PACKLIST (База паспортов) =====
     var allPacksCache = [];

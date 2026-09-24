@@ -317,6 +317,9 @@
     addPack: function (model, size, qty, passport, color) {
       return rpc('create_pack', { p_model: model, p_size: size, p_quantity: Number(qty), p_passport_no: passport || '', p_color: color || '' });
     },
+    addPacksBulk: function (rows) {
+      return rpc('create_packs_bulk', { p_rows: rows }).then(unwrapRpc);
+    },
     editPackPassport: function (id, fields) {
       return rpc('edit_pack', { p_pack_id: id, p_cut_date: fields.dateCut, p_model: fields.model, p_size: fields.size,
         p_quantity: Number(fields.qty), p_passport_no: fields.passport || '', p_color: fields.color || '' });
