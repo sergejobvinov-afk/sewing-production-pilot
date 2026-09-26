@@ -330,6 +330,15 @@
     getDashboardData: function () {
       return rpc('get_dashboard_data', {}).then(unwrapRpc);
     },
+    getCostCalculatorData: function () {
+      return rpc('get_cost_calculator_data', {}).then(unwrapRpc);
+    },
+    saveCostSettings: function (settings) {
+      return rpc('save_cost_settings', { p_settings: settings }).then(unwrapRpc);
+    },
+    saveProductionOrder: function (order) {
+      return rpc('save_production_order', { p_order: order }).then(unwrapRpc);
+    },
     getCatalogAdmin: function () {
       return rpc('get_catalog_admin', {}).then(unwrapRpc);
     },

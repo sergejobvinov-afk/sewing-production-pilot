@@ -967,6 +967,41 @@ var QRGen=(function(){
       <div class="loading" id="catalog-loading"><div class="spinner"></div><div>Загрузка...</div></div>
     </div>
 
+    <!-- ===== COST CALCULATOR (admin/accountant) ===== -->
+    <div class="screen" id="screen-costing">
+      <div class="card">
+        <h3>🧮 Расчёт цены заказчику</h3>
+        <label>Название заказа<input id="cost-name" type="text" placeholder="Например: ДенисЛМ — октябрь"></label>
+        <label>Модель<select id="cost-model" onchange="costModelChanged()"><option value="">Выберите модель</option></select></label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <label>Количество<input id="cost-qty" type="number" min="1" value="1000" oninput="calculateCostOrder()"></label>
+          <label>Цена заказчику, ₽<input id="cost-client-price" type="number" min="0" step="0.01" value="0" oninput="calculateCostOrder()"></label>
+          <label>Швей на заказе<input id="cost-assigned-sewers" type="number" min="1" value="4" oninput="calculateCostOrder()"></label>
+          <label>Выработка швеи/день<input id="cost-productivity" type="number" min="1" value="100" oninput="calculateCostOrder()"></label>
+          <label>Материалы на 1 шт., ₽<input id="cost-materials" type="number" min="0" step="0.01" value="0" oninput="calculateCostOrder()"></label>
+          <label>Сделка швее на 1 шт., ₽<input id="cost-piecework" type="number" min="0" step="0.01" value="0" oninput="calculateCostOrder()"></label>
+        </div>
+        <div id="cost-result" style="margin-top:12px;"></div>
+        <button class="action-btn btn-success" onclick="saveProductionOrder()">💾 Сохранить расчёт заказа</button>
+      </div>
+      <details class="card" id="cost-settings-card">
+        <summary style="font-weight:700;cursor:pointer;">⚙️ Постоянные расходы и налоги</summary>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;">
+          <label>НДС, %<input id="cost-vat" type="number" min="0" step="0.1" oninput="calculateCostOrder()"></label>
+          <label>УСН, %<input id="cost-tax" type="number" min="0" step="0.1" oninput="calculateCostOrder()"></label>
+          <label>Аренда/месяц<input id="cost-rent" type="number" min="0"></label>
+          <label>Электричество/месяц<input id="cost-electricity" type="number" min="0"></label>
+          <label>Стоянка/месяц<input id="cost-parking" type="number" min="0"></label>
+          <label>Персонал/месяц<input id="cost-staff" type="number" min="0"></label>
+          <label>Рабочих дней<input id="cost-workdays" type="number" min="1"></label>
+          <label>Всего швей<input id="cost-total-sewers" type="number" min="1"></label>
+        </div>
+        <button class="action-btn btn-secondary" id="cost-save-settings" onclick="saveCostSettings()">Сохранить настройки</button>
+      </details>
+      <div class="dash-section"><h3>📚 Последние расчёты</h3><div id="cost-orders"></div></div>
+      <div class="loading" id="costing-loading"><div class="spinner"></div><div>Загрузка...</div></div>
+    </div>
+
     <!-- ===== USERS SCREEN (admin only) ===== -->
     <div class="screen" id="screen-users">
       <div class="card" id="users-add-card">
@@ -1010,7 +1045,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-  <script src="supabase/pilot-api.js?v=cut-date-analytics-1"></script>
+  <script src="supabase/pilot-api.js?v=cost-calculator-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1252,6 +1287,7 @@ function submitAcceptWithOps() {
       if (role === 'admin' || role === 'accountant') {
         btns += menuBtn('btn-dashboard', '📊', 'Дашборд', 'Финансы, производство, швеи', 'openDashboard()');
         btns += menuBtn('btn-status', '💳', 'Оплата операций', 'Массовая оплата швеям и от заказчика', 'openPayments()');
+        btns += menuBtn('', '🧮', 'Расчёт стоимости', 'Цена заказчику и плановая прибыль', 'openCostCalculator()');
       }
       if (role === 'admin') {
         btns += menuBtn('', '🧾', 'Модели и расценки', 'Операции, цены и порядок', 'openCatalogAdmin()');
@@ -2179,6 +2215,65 @@ function openDashboard(){
     }
 
     // ===== CATALOG MANAGEMENT =====
+    var costCalculatorData=null,costCalculation=null;
+    function costNumber(id){return Number(document.getElementById(id).value)||0;}
+    function openCostCalculator(){
+      showScreen('costing','🧮 Расчёт стоимости','Плановая цена заказчику');showLoading('costing',true);
+      API.getCostCalculatorData().then(function(r){
+        showLoading('costing',false);if(!r||!r.success){showToast((r&&r.message)||'Нет доступа',true);return;}
+        costCalculatorData=r;var s=r.settings||{},fields={
+          'cost-vat':Number(s.vat_rate||0)*100,'cost-tax':Number(s.tax_rate||0)*100,'cost-rent':s.rent_monthly,
+          'cost-electricity':s.electricity_monthly,'cost-parking':s.parking_monthly,'cost-staff':s.staff_salary_monthly,
+          'cost-workdays':s.workdays_monthly,'cost-total-sewers':s.total_sewers};
+        Object.keys(fields).forEach(function(id){document.getElementById(id).value=fields[id]||0;});
+        var select=document.getElementById('cost-model');select.innerHTML='<option value="">Выберите модель</option>';
+        (r.models||[]).forEach(function(m){var o=document.createElement('option');o.value=m.model;o.textContent=m.model;select.appendChild(o);});
+        document.getElementById('cost-save-settings').style.display=currentUser.role==='admin'?'block':'none';
+        renderCostOrders(r.orders||[]);calculateCostOrder();
+      }).catch(function(e){showLoading('costing',false);showToast('Ошибка: '+e.message,true);});
+    }
+    function costModelChanged(){
+      var model=document.getElementById('cost-model').value,m=(costCalculatorData.models||[]).find(function(x){return x.model===model;});
+      if(m){document.getElementById('cost-piecework').value=m.sewerPrice;document.getElementById('cost-client-price').value=m.clientPrice;}
+      calculateCostOrder();
+    }
+    function calculateCostOrder(){
+      if(!document.getElementById('cost-result'))return null;
+      var qty=costNumber('cost-qty'),price=costNumber('cost-client-price'),assigned=costNumber('cost-assigned-sewers'),productivity=costNumber('cost-productivity');
+      var materials=costNumber('cost-materials'),piecework=costNumber('cost-piecework'),vat=costNumber('cost-vat')/100,tax=costNumber('cost-tax')/100;
+      var rent=costNumber('cost-rent'),electricity=costNumber('cost-electricity'),parking=costNumber('cost-parking'),staff=costNumber('cost-staff');
+      var workdays=costNumber('cost-workdays'),totalSewers=costNumber('cost-total-sewers');
+      if(!qty||!assigned||!productivity||!workdays||!totalSewers){document.getElementById('cost-result').innerHTML='<div style="color:#c62828;">Заполните количество, швей, выработку и рабочие дни.</div>';costCalculation=null;return null;}
+      var days=Math.ceil(qty/(assigned*productivity)),monthlyFixed=rent+electricity+parking+staff;
+      var fixedShare=monthlyFixed*(assigned*days)/(totalSewers*workdays),totalCost=qty*(piecework+materials)+fixedShare;
+      var unitCost=totalCost/qty,netRevenue=qty*price/(1+vat),taxAmount=netRevenue*tax,profit=netRevenue-totalCost-taxAmount;
+      var margin=netRevenue?profit/netRevenue*100:0,breakEven=totalCost/(qty*(1-tax))*(1+vat);
+      costCalculation={name:document.getElementById('cost-name').value.trim(),model:document.getElementById('cost-model').value,qty:qty,clientPrice:price,
+        assignedSewers:assigned,productivity:productivity,materials:materials,piecework:piecework,vatRate:vat,taxRate:tax,days:days,
+        fixedShare:fixedShare,totalCost:totalCost,unitCost:unitCost,netRevenue:netRevenue,taxAmount:taxAmount,netProfit:profit,margin:margin};
+      var cls=profit<0?'loss':'profit',h='<div class="dash-grid">';
+      h+=dashItem(days,'Рабочих дней','');h+=dashItem(formatNum(unitCost)+' ₽','Себестоимость 1 шт.','');
+      h+=dashItem(formatNum(breakEven)+' ₽','Безубыточная цена','');h+=dashItem(formatNum(totalCost)+' ₽','Общие затраты','');
+      h+=dashItem(formatNum(profit)+' ₽','Чистая прибыль',cls);h+=dashItem(formatNum(margin)+'%','Рентабельность',cls);h+='</div>';
+      h+='<div style="font-size:12px;color:#666;margin-top:10px;">Сдельная зарплата: '+formatNum(qty*piecework)+' ₽ · Доля постоянных расходов: '+formatNum(fixedShare)+' ₽ · Налоги: '+formatNum(taxAmount)+' ₽</div>';
+      if(price<breakEven)h+='<div style="margin-top:10px;color:#c62828;font-weight:700;">⚠️ Цена ниже безубыточной на '+formatNum(breakEven-price)+' ₽ за изделие.</div>';
+      document.getElementById('cost-result').innerHTML=h;return costCalculation;
+    }
+    function saveCostSettings(){
+      var settings={vatRate:costNumber('cost-vat')/100,taxRate:costNumber('cost-tax')/100,rentMonthly:costNumber('cost-rent'),
+        electricityMonthly:costNumber('cost-electricity'),parkingMonthly:costNumber('cost-parking'),staffSalaryMonthly:costNumber('cost-staff'),
+        workdaysMonthly:costNumber('cost-workdays'),totalSewers:costNumber('cost-total-sewers')};
+      API.saveCostSettings(settings).then(function(r){showToast(r.message,!r.success);}).catch(function(e){showToast('Ошибка: '+e.message,true);});
+    }
+    function saveProductionOrder(){
+      var c=calculateCostOrder();if(!c||!c.name||!c.model){showToast('Укажите название заказа и модель',true);return;}
+      API.saveProductionOrder(c).then(function(r){showToast(r.message,!r.success);if(r.success)openCostCalculator();}).catch(function(e){showToast('Ошибка: '+e.message,true);});
+    }
+    function renderCostOrders(orders){
+      var h='';orders.forEach(function(o){h+='<div style="padding:9px 0;border-bottom:1px solid #eee;"><strong>'+escapeHtml(o.name)+'</strong><div style="font-size:12px;color:#666;">'+escapeHtml(o.model)+' · '+o.qty+' шт. · '+formatNum(o.clientPrice)+' ₽/шт.</div><div style="font-size:12px;">Себестоимость: '+formatNum(o.unitCost)+' ₽ · Прибыль: '+formatNum(o.profit)+' ₽ · '+formatNum(o.margin)+'%</div></div>';});
+      document.getElementById('cost-orders').innerHTML=h||'<div style="color:#777;">Сохранённых расчётов пока нет.</div>';
+    }
+
     var catalogAdminCache=[];
     function openCatalogAdmin(){
       showScreen('catalog','🧾 Модели и расценки','Только для администратора');showLoading('catalog',true);
