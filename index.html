@@ -574,12 +574,12 @@ var QRGen=(function(){
   }
   
   /* Скрываем все элементы, кроме контейнера с паспортами */
-  .header, .back-btn, .container > *:not(#screen-multipassport),
+  .header, .back-btn, .container > *:not(#screen-multipassport):not(#screen-passport),
   .action-btn, .toast, .no-print {
     display: none !important;
   }
   
-  #screen-multipassport {
+  #screen-multipassport, #screen-passport {
     display: block !important;
     margin: 0;
     padding: 0;
@@ -934,7 +934,7 @@ var QRGen=(function(){
     <div class="screen" id="screen-multipassport">
       <div id="multipassport-content"></div>
       <div class="no-print">
-        <button class="action-btn btn-orange" onclick="window.print()">🖨️ Печать всех паспортов</button>
+        <button class="action-btn btn-orange" onclick="openPassportPrintView('multipassport-content',true)">🖨️ Печать всех паспортов</button>
         <button class="action-btn btn-secondary" onclick="openPackList()">◀ Назад к списку</button>
         <button class="action-btn btn-secondary" onclick="goHome()">🏠 На главную</button>
       </div>
@@ -944,7 +944,7 @@ var QRGen=(function(){
     <div class="screen" id="screen-passport">
       <div id="passport-content"></div>
       <div class="no-print">
-        <button class="action-btn btn-orange" onclick="window.print()">🖨️ Печать паспорта</button>
+        <button class="action-btn btn-orange" onclick="openPassportPrintView('passport-content',false)">🖨️ Печать паспорта</button>
         <button class="action-btn btn-secondary" onclick="goHome()">🏠 На главную</button>
       </div>
     </div>
@@ -1046,7 +1046,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-  <script src="supabase/pilot-api.js?v=order-plan-fact-1"></script>
+  <script src="supabase/pilot-api.js?v=print-fix-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -2154,6 +2154,20 @@ function openDashboard(){
           try{ qrEl.innerHTML=QRGen.makeSvg(qrContent, 120); }catch(e){ qrEl.innerHTML='<div style="width:120px;height:120px;border:1px solid #ccc;display:flex;align-items:center;justify-content:center;font-size:10px;">QR err</div>'; }
         }
       });
+    }
+
+    function openPassportPrintView(contentId,isMultiple){
+      var source=document.getElementById(contentId);
+      if(!source||!source.innerHTML.trim()){showToast('Сначала сформируйте паспорта',true);return;}
+      var printWindow=window.open('','_blank');
+      if(!printWindow){showToast('Браузер заблокировал окно печати. Разрешите всплывающие окна для этого сайта.',true);return;}
+      var styles=Array.from(document.querySelectorAll('style')).map(function(s){return s.textContent;}).join('\n');
+      var wrapper=isMultiple?'<div class="container"><div id="screen-multipassport" class="screen active"><div id="multipassport-content">'+source.innerHTML+'</div></div></div>':'<div class="container"><div id="screen-passport" class="screen active"><div id="passport-content">'+source.innerHTML+'</div></div></div>';
+      printWindow.document.open();
+      printWindow.document.write('<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Печать паспортов</title><style>'+styles+' body{background:#fff}.container{max-width:none}.print-toolbar{position:sticky;top:0;z-index:9999;padding:10px;background:#fff;border-bottom:1px solid #ddd}.print-toolbar button{width:100%;padding:14px;border:0;border-radius:10px;background:#ff9800;color:#fff;font-size:17px;font-weight:700}@media print{.print-toolbar{display:none!important}}</style></head><body><div class="print-toolbar"><button onclick="window.print()">🖨️ Печать / Сохранить PDF</button></div>'+wrapper+'</body></html>');
+      printWindow.document.close();
+      try{printWindow.focus();}catch(e){}
+      setTimeout(function(){try{printWindow.print();}catch(e){}},400);
     }
     
     // ===== PASSPORT / QR PRINT =====
