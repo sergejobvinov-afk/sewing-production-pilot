@@ -339,6 +339,15 @@
     saveProductionOrder: function (order) {
       return rpc('save_production_order', { p_order: order }).then(unwrapRpc);
     },
+    getProductionOrderReport: function (orderId) {
+      return rpc('get_production_order_report', { p_order_id: Number(orderId) }).then(unwrapRpc);
+    },
+    assignPacksToOrder: function (orderId, packIds) {
+      return rpc('assign_packs_to_order', { p_order_id: Number(orderId), p_pack_ids: packIds }).then(unwrapRpc);
+    },
+    unassignPackFromOrder: function (orderId, packId) {
+      return rpc('unassign_pack_from_order', { p_order_id: Number(orderId), p_pack_id: packId }).then(unwrapRpc);
+    },
     getCatalogAdmin: function () {
       return rpc('get_catalog_admin', {}).then(unwrapRpc);
     },

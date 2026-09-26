@@ -999,6 +999,7 @@ var QRGen=(function(){
         <button class="action-btn btn-secondary" id="cost-save-settings" onclick="saveCostSettings()">Сохранить настройки</button>
       </details>
       <div class="dash-section"><h3>📚 Последние расчёты</h3><div id="cost-orders"></div></div>
+      <div id="cost-order-report"></div>
       <div class="loading" id="costing-loading"><div class="spinner"></div><div>Загрузка...</div></div>
     </div>
 
@@ -1045,7 +1046,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-  <script src="supabase/pilot-api.js?v=cost-calculator-1"></script>
+  <script src="supabase/pilot-api.js?v=order-plan-fact-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -2270,9 +2271,36 @@ function openDashboard(){
       API.saveProductionOrder(c).then(function(r){showToast(r.message,!r.success);if(r.success)openCostCalculator();}).catch(function(e){showToast('Ошибка: '+e.message,true);});
     }
     function renderCostOrders(orders){
-      var h='';orders.forEach(function(o){h+='<div style="padding:9px 0;border-bottom:1px solid #eee;"><strong>'+escapeHtml(o.name)+'</strong><div style="font-size:12px;color:#666;">'+escapeHtml(o.model)+' · '+o.qty+' шт. · '+formatNum(o.clientPrice)+' ₽/шт.</div><div style="font-size:12px;">Себестоимость: '+formatNum(o.unitCost)+' ₽ · Прибыль: '+formatNum(o.profit)+' ₽ · '+formatNum(o.margin)+'%</div></div>';});
+      var h='';orders.forEach(function(o){h+='<div style="padding:9px 0;border-bottom:1px solid #eee;"><strong>'+escapeHtml(o.name)+'</strong><div style="font-size:12px;color:#666;">'+escapeHtml(o.model)+' · '+o.qty+' шт. · '+formatNum(o.clientPrice)+' ₽/шт.</div><div style="font-size:12px;">Себестоимость: '+formatNum(o.unitCost)+' ₽ · Прибыль: '+formatNum(o.profit)+' ₽ · '+formatNum(o.margin)+'%</div><button class="action-btn btn-secondary" style="padding:8px;margin-top:7px;" onclick="openCostOrderReport('+o.id+')">📊 План — факт</button></div>';});
       document.getElementById('cost-orders').innerHTML=h||'<div style="color:#777;">Сохранённых расчётов пока нет.</div>';
     }
+    var currentCostOrderId=null;
+    function orderStatusLabel(status){return {new:'Новая',issued:'Выдано',partially_accepted:'Частично принято',accepted:'Принято'}[status]||status;}
+    function openCostOrderReport(orderId){
+      currentCostOrderId=orderId;showLoading('costing',true);
+      API.getProductionOrderReport(orderId).then(function(r){showLoading('costing',false);renderCostOrderReport(r);})
+        .catch(function(e){showLoading('costing',false);showToast('Ошибка: '+e.message,true);});
+    }
+    function renderCostOrderReport(r){
+      if(!r||!r.success)return;var o=r.order,s=r.stats||{},h='<div class="dash-section"><h3>📊 План — факт: '+escapeHtml(o.name)+'</h3>';
+      h+='<div class="dash-grid">'+dashItem(o.qty,'План, изделий','')+dashItem(s.cutQty||0,'Раскроено','')+dashItem(s.issuedQty||0,'Выдано в пошив','')+dashItem(s.acceptedQty||0,'Полностью принято','')+dashItem(s.remainingQty||0,'Осталось по плану','')+dashItem(s.inWorkQty||0,'Сейчас в пошиве','')+'</div>';
+      var progress=o.qty?Math.min(100,Number(s.acceptedQty||0)/Number(o.qty)*100):0;
+      h+='<div style="margin:12px 0 4px;font-size:12px;">Выполнение заказа: '+formatNum(progress)+'%</div><div style="height:10px;background:#eee;border-radius:8px;overflow:hidden;"><div style="height:100%;width:'+progress+'%;background:#4caf50;"></div></div>';
+      h+='<div class="dash-grid" style="margin-top:12px;">'+dashItem(formatNum(s.operationRevenue||0)+' ₽','Начислено заказчику','')+dashItem(formatNum(s.clientPaid||0)+' ₽','Оплачено заказчиком','')+dashItem(formatNum(s.sewerAccrued||0)+' ₽','Начислено швеям','')+dashItem(formatNum(s.sewerPaid||0)+' ₽','Оплачено швеям','')+'</div>';
+      h+='<div style="font-size:12px;color:#666;margin-top:8px;">Финансовый факт считается по принятым операциям и зафиксированным при выдаче расценкам.</div>';
+      h+='<h4 style="margin:16px 0 6px;">Привязанные паспорта ('+(r.linkedPacks||[]).length+')</h4>';
+      (r.linkedPacks||[]).forEach(function(p){h+='<div style="padding:7px 0;border-bottom:1px solid #eee;font-size:13px;"><strong>'+escapeHtml(p.id)+'</strong> · '+escapeHtml(p.size)+' · '+p.qty+' шт. · '+escapeHtml(orderStatusLabel(p.status))+' <button onclick="unassignCostPack(\''+escapeHtml(p.id)+'\')" style="float:right;border:0;background:none;color:#c62828;">Отвязать</button></div>';});
+      h+='<h4 style="margin:16px 0 6px;">Добавить пачки модели «'+escapeHtml(o.model)+'»</h4>';
+      if((r.candidatePacks||[]).length){h+='<label style="display:block;margin-bottom:8px;"><input type="checkbox" onchange="toggleCostCandidates(this.checked)" style="width:20px;height:20px;"> Выбрать все</label>';
+        (r.candidatePacks||[]).forEach(function(p){h+='<label style="display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid #eee;font-size:13px;"><input class="cost-pack-check" type="checkbox" value="'+escapeHtml(p.id)+'" style="width:20px;height:20px;"><span><strong>'+escapeHtml(p.id)+'</strong> · '+escapeHtml(p.dateCut)+' · '+escapeHtml(p.size)+' · '+p.qty+' шт. · '+escapeHtml(orderStatusLabel(p.status))+'</span></label>';});
+        h+='<button class="action-btn btn-success" onclick="assignSelectedCostPacks()">🔗 Привязать выбранные пачки</button>';
+      }else h+='<div style="color:#777;">Свободных пачек этой модели нет.</div>';
+      document.getElementById('cost-order-report').innerHTML=h+'</div>';document.getElementById('cost-order-report').scrollIntoView({behavior:'smooth'});
+    }
+    function toggleCostCandidates(checked){document.querySelectorAll('.cost-pack-check').forEach(function(x){x.checked=checked;});}
+    function assignSelectedCostPacks(){var ids=Array.from(document.querySelectorAll('.cost-pack-check:checked')).map(function(x){return x.value;});if(!ids.length){showToast('Выберите пачки',true);return;}
+      API.assignPacksToOrder(currentCostOrderId,ids).then(function(r){showToast(r.message,!r.success);if(r.success)openCostOrderReport(currentCostOrderId);}).catch(function(e){showToast('Ошибка: '+e.message,true);});}
+    function unassignCostPack(packId){if(!window.confirm('Отвязать пачку '+packId+' от заказа?'))return;API.unassignPackFromOrder(currentCostOrderId,packId).then(function(r){showToast(r.message,!r.success);if(r.success)openCostOrderReport(currentCostOrderId);}).catch(function(e){showToast('Ошибка: '+e.message,true);});}
 
     var catalogAdminCache=[];
     function openCatalogAdmin(){
