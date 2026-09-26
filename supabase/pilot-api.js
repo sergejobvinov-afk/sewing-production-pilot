@@ -13,6 +13,7 @@
   var session = null;
   var config = null;
   var originalApi = window.API;
+  var refreshPromise = null;
 
   function loadConfig() {
     if (window.SUPABASE_CONFIG) return Promise.resolve(window.SUPABASE_CONFIG);
@@ -28,7 +29,37 @@
     });
   }
 
-  function request(path, options) {
+  function clearExpiredSession() {
+    session = null;
+    sessionStorage.removeItem('supabasePilotSession');
+    window.currentUser = null;
+    if (typeof window.showScreen === 'function') window.showScreen('login', 'Швейное производство', 'Войдите снова');
+  }
+
+  function refreshSession() {
+    if (refreshPromise) return refreshPromise;
+    if (!session || !session.refresh_token) return Promise.reject(new Error('Сессия истекла. Войдите снова.'));
+    refreshPromise = fetch(config.url.replace(/\/$/, '') + '/auth/v1/token?grant_type=refresh_token', {
+      method: 'POST',
+      headers: { apikey: config.anonKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: session.refresh_token })
+    }).then(function (response) {
+      return response.text().then(function (text) {
+        var body = text ? JSON.parse(text) : null;
+        if (!response.ok || !body || !body.access_token) throw new Error('Сессия истекла. Войдите снова.');
+        if (!body.user && session.user) body.user = session.user;
+        session = body;
+        sessionStorage.setItem('supabasePilotSession', JSON.stringify(session));
+        return session;
+      });
+    }).catch(function (error) {
+      clearExpiredSession();
+      throw error;
+    }).finally(function () { refreshPromise = null; });
+    return refreshPromise;
+  }
+
+  function request(path, options, allowRefresh) {
     if (!config) return Promise.reject(new Error('Supabase не настроен'));
     var headers = Object.assign({
       apikey: config.anonKey,
@@ -40,7 +71,14 @@
       .then(function (response) {
         return response.text().then(function (text) {
           var body = text ? JSON.parse(text) : null;
-          if (!response.ok) throw new Error((body && (body.msg || body.message || body.error_description)) || ('HTTP ' + response.status));
+          if (!response.ok) {
+            var message = (body && (body.msg || body.message || body.error_description)) || ('HTTP ' + response.status);
+            var authExpired = response.status === 401 || /jwt.*expired|token.*expired|invalid jwt/i.test(message);
+            if (allowRefresh !== false && authExpired && session && session.refresh_token && path.indexOf('/auth/v1/token') !== 0) {
+              return refreshSession().then(function () { return request(path, options, false); });
+            }
+            throw new Error(message);
+          }
           console.info('[Supabase pilot] ' + path.split('?')[0] + ': ' + Math.round(performance.now() - started) + ' ms');
           return body;
         });
