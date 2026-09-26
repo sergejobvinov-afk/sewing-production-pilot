@@ -1010,7 +1010,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-  <script src="supabase/pilot-api.js?v=session-refresh-1"></script>
+  <script src="supabase/pilot-api.js?v=cut-date-analytics-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1727,15 +1727,63 @@ function cancelCurrentIssue(){
     });
 }
     // ===== DASHBOARD =====
-    // В index.html, функция openDashboard (заменить содержимое)
+var dashboardPacksCache=[];
+function buildCutDateSlice(packs){
+  dashboardPacksCache=(packs||[]).filter(function(p){return p.status!=='Аннулирована';});
+  var dates=dashboardPacksCache.map(function(p){return normalizePackDate(p.dateCut);}).filter(Boolean).sort();
+  var models=Array.from(new Set(dashboardPacksCache.map(function(p){return p.model;}).filter(Boolean))).sort();
+  var h='<div class="dash-section"><h3>✂️ Срез по дате кроя</h3>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
+  h+='<label style="font-size:12px;color:#666;">С даты<input id="cut-slice-from" type="date" value="'+escapeHtml(dates[0]||'')+'" onchange="renderCutDateSlice()" style="width:100%;margin-top:4px;"></label>';
+  h+='<label style="font-size:12px;color:#666;">По дату<input id="cut-slice-to" type="date" value="'+escapeHtml(dates[dates.length-1]||'')+'" onchange="renderCutDateSlice()" style="width:100%;margin-top:4px;"></label></div>';
+  h+='<label style="font-size:12px;color:#666;display:block;margin-top:10px;">Модель<select id="cut-slice-model" onchange="renderCutDateSlice()" style="width:100%;margin-top:4px;"><option value="">Все модели</option>';
+  models.forEach(function(model){h+='<option value="'+escapeHtml(model)+'">'+escapeHtml(model)+'</option>';});
+  h+='</select></label><div id="cut-slice-results" style="margin-top:12px;"></div></div>';
+  return h;
+}
+function cutSliceStats(rows){
+  var stats={packs:0,items:0,issuedPacks:0,issuedItems:0,inWorkPacks:0,inWorkItems:0,acceptedPacks:0,acceptedItems:0,remainingPacks:0,remainingItems:0};
+  rows.forEach(function(p){
+    var qty=Number(p.qty)||0,issued=p.status==='Выдано'||p.status==='Частично принято'||p.status==='Принято';
+    var inWork=p.status==='Выдано'||p.status==='Частично принято',accepted=p.status==='Принято';
+    stats.packs++;stats.items+=qty;
+    if(issued){stats.issuedPacks++;stats.issuedItems+=qty;}
+    if(inWork){stats.inWorkPacks++;stats.inWorkItems+=qty;}
+    if(accepted){stats.acceptedPacks++;stats.acceptedItems+=qty;}
+    else{stats.remainingPacks++;stats.remainingItems+=qty;}
+  });
+  return stats;
+}
+function cutSliceTable(rows,key,label){
+  var groups={};
+  rows.forEach(function(p){var name=p[key]||'Не указано';if(!groups[name])groups[name]=[];groups[name].push(p);});
+  var names=Object.keys(groups).sort(),h='<div style="overflow-x:auto;margin-top:14px;"><div style="font-weight:700;margin-bottom:6px;">'+label+'</div>';
+  h+='<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr><th style="text-align:left;padding:6px;border-bottom:1px solid #ddd;">'+label.replace('По ','')+'</th><th>Изделий</th><th>Пачек</th><th>В пошиве</th><th>Принято</th><th>Осталось</th></tr></thead><tbody>';
+  names.forEach(function(name){var s=cutSliceStats(groups[name]);h+='<tr><td style="padding:7px 6px;border-bottom:1px solid #eee;font-weight:600;">'+escapeHtml(name)+'</td><td style="text-align:center;">'+s.items+'</td><td style="text-align:center;">'+s.packs+'</td><td style="text-align:center;">'+s.inWorkItems+'</td><td style="text-align:center;">'+s.acceptedItems+'</td><td style="text-align:center;">'+s.remainingItems+'</td></tr>';});
+  return h+'</tbody></table></div>';
+}
+function renderCutDateSlice(){
+  var target=document.getElementById('cut-slice-results');if(!target)return;
+  var from=document.getElementById('cut-slice-from').value,to=document.getElementById('cut-slice-to').value,model=document.getElementById('cut-slice-model').value;
+  var rows=dashboardPacksCache.filter(function(p){var date=normalizePackDate(p.dateCut);return(!from||date>=from)&&(!to||date<=to)&&(!model||p.model===model);});
+  var s=cutSliceStats(rows),h='<div class="dash-grid">';
+  h+=dashItem(s.items,'Изделий всего','');h+=dashItem(s.packs,'Пачек всего','');
+  h+=dashItem(s.issuedItems,'Выдано в пошив всего','');h+=dashItem(s.inWorkItems,'Сейчас в пошиве','');
+  h+=dashItem(s.acceptedItems,'Принято ОТК','');h+=dashItem(s.remainingItems,'Осталось принять','');h+='</div>';
+  h+='<div style="font-size:12px;color:#666;margin-top:10px;">Пачки: выдано '+s.issuedPacks+', сейчас в пошиве '+s.inWorkPacks+', принято '+s.acceptedPacks+', осталось '+s.remainingPacks+'.</div>';
+  if(rows.length){h+=cutSliceTable(rows,'model','По моделям');h+=cutSliceTable(rows,'size','По размерам');}
+  else h+='<div style="padding:14px;text-align:center;color:#777;">За выбранный период данных нет.</div>';
+  target.innerHTML=h;
+}
 function openDashboard(){
   showScreen('dashboard','📊 Дашборд','Аналитика');showLoading('dashboard',true);
   document.getElementById('dashboard-content').innerHTML='';
-  API.getDashboardData(currentUser.pin)
-  .then(function(d){
+  Promise.all([API.getDashboardData(currentUser.pin),API.getAllPacks(currentUser.pin)])
+  .then(function(result){
+    var d=result[0],packResult=result[1];
     showLoading('dashboard',false);
     if(!d||!d.success){document.getElementById('dashboard-content').innerHTML='<div class="result-card error"><div class="result-icon">❌</div><div>'+escapeHtml((d&&d.message)||'Нет доступа')+'</div></div>';return;}
-    var h='';
+    var h=buildCutDateSlice((packResult&&packResult.packs)||[]);
     h+='<div class="dash-section"><h3>💰 Финансы</h3><div class="dash-grid">';
     h+=dashItem(formatNum(d.finance.revenue)+' ₽','Выручка','');
     h+=dashItem(formatNum(d.finance.clientDue||0)+' ₽','Долг заказчика','');
@@ -1766,7 +1814,7 @@ function openDashboard(){
       sk.forEach(function(n){var s=d.sewers[n];h+='<div class="sewer-row"><div class="sewer-name">'+escapeHtml(n)+'</div><div class="sewer-stats"><div class="zp">К выплате: '+escapeHtml(formatNum(s.zp))+' ₽</div><div>Оплачено: '+escapeHtml(formatNum(s.paid||0))+' ₽ · '+escapeHtml(s.items)+' шт.</div></div></div>';});
       h+='</div>';
     }
-    document.getElementById('dashboard-content').innerHTML=h;
+    document.getElementById('dashboard-content').innerHTML=h;renderCutDateSlice();
   })
   .catch(function(e){showLoading('dashboard',false);document.getElementById('dashboard-content').innerHTML='<div class="result-card error"><div class="result-icon">❌</div><div>Ошибка: '+escapeHtml(e.message)+'</div></div>';
   });
