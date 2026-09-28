@@ -35,7 +35,7 @@
     if (configPromise) return configPromise;
     configPromise = new Promise(function (resolve, reject) {
       var script = document.createElement('script');
-      script.src = 'supabase/config.js';
+      script.src = 'supabase/config.js?v=proxy-1';
       var timer = setTimeout(function () {
         reject(new Error('Не удалось загрузить настройки входа. Обновите страницу.'));
       }, 10000);
