@@ -14,19 +14,46 @@
   var config = null;
   var originalApi = window.API;
   var refreshPromise = null;
+  var configPromise = null;
+  var REQUEST_TIMEOUT_MS = 20000;
+
+  function fetchWithTimeout(url, options, timeoutMessage) {
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, REQUEST_TIMEOUT_MS);
+    return fetch(url, Object.assign({}, options, { signal: controller.signal }))
+      .catch(function (error) {
+        if (error && error.name === 'AbortError') {
+          throw new Error(timeoutMessage || 'Сервер не ответил. Проверьте интернет и повторите попытку.');
+        }
+        throw error;
+      })
+      .finally(function () { clearTimeout(timer); });
+  }
 
   function loadConfig() {
     if (window.SUPABASE_CONFIG) return Promise.resolve(window.SUPABASE_CONFIG);
-    return new Promise(function (resolve, reject) {
+    if (configPromise) return configPromise;
+    configPromise = new Promise(function (resolve, reject) {
       var script = document.createElement('script');
       script.src = 'supabase/config.js';
+      var timer = setTimeout(function () {
+        reject(new Error('Не удалось загрузить настройки входа. Обновите страницу.'));
+      }, 10000);
       script.onload = function () {
+        clearTimeout(timer);
         if (!window.SUPABASE_CONFIG) reject(new Error('Файл supabase/config.js не настроен'));
         else resolve(window.SUPABASE_CONFIG);
       };
-      script.onerror = function () { reject(new Error('Не найден supabase/config.js')); };
+      script.onerror = function () {
+        clearTimeout(timer);
+        reject(new Error('Не найден supabase/config.js'));
+      };
       document.head.appendChild(script);
+    }).catch(function (error) {
+      configPromise = null;
+      throw error;
     });
+    return configPromise;
   }
 
   function clearExpiredSession() {
@@ -39,11 +66,11 @@
   function refreshSession() {
     if (refreshPromise) return refreshPromise;
     if (!session || !session.refresh_token) return Promise.reject(new Error('Сессия истекла. Войдите снова.'));
-    refreshPromise = fetch(config.url.replace(/\/$/, '') + '/auth/v1/token?grant_type=refresh_token', {
+    refreshPromise = fetchWithTimeout(config.url.replace(/\/$/, '') + '/auth/v1/token?grant_type=refresh_token', {
       method: 'POST',
       headers: { apikey: config.anonKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: session.refresh_token })
-    }).then(function (response) {
+    }, 'Сервер входа не ответил. Проверьте интернет и повторите.').then(function (response) {
       return response.text().then(function (text) {
         var body = text ? JSON.parse(text) : null;
         if (!response.ok || !body || !body.access_token) throw new Error('Сессия истекла. Войдите снова.');
@@ -67,7 +94,10 @@
     }, options && options.headers);
     if (session && session.access_token) headers.Authorization = 'Bearer ' + session.access_token;
     var started = performance.now();
-    return fetch(config.url.replace(/\/$/, '') + path, Object.assign({}, options, { headers: headers }))
+    return fetchWithTimeout(config.url.replace(/\/$/, '') + path, Object.assign({}, options, { headers: headers }),
+      path.indexOf('/auth/v1/') === 0
+        ? 'Сервер входа не ответил. Проверьте интернет и повторите.'
+        : 'Сервер не ответил. Проверьте интернет и повторите.')
       .then(function (response) {
         return response.text().then(function (text) {
           var body = text ? JSON.parse(text) : null;

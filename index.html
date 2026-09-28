@@ -1046,7 +1046,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-  <script src="supabase/pilot-api.js?v=print-fix-1"></script>
+  <script src="supabase/pilot-api.js?v=login-fix-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1081,16 +1081,18 @@ var QRGen=(function(){
     var scanners = {};
     var currentQR = {};
     var packData = {};
+    var loginInFlight = false;
     var ROLE_NAMES = {admin:'👑 Админ', master:'📋 Мастер', sewer:'🧵 Швея', accountant:'📊 Бухгалтер'};
 
     // ===== LOGIN / LOGOUT =====
     function doLogin() {
+      if (loginInFlight) return;
       var pin = document.getElementById('login-pin').value.trim();
       if (!pin) { showToast('Введите PIN', true); return; }
+      loginInFlight = true;
       showLoading('login', true);
       API.login(pin)
           .then(function(r) {
-          showLoading('login', false);
           if (r.success) {
             currentUser = { name: r.name, pin: r.pin, role: r.role };
             buildHomeMenu();
@@ -1102,8 +1104,11 @@ var QRGen=(function(){
           }
         })
           .catch(function(e) {
-          showLoading('login', false);
           showToast('Ошибка: ' + e.message, true);
+        })
+          .finally(function() {
+          loginInFlight = false;
+          showLoading('login', false);
         });
     }
 
