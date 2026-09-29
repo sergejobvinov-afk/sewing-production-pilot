@@ -894,11 +894,20 @@ var QRGen=(function(){
     <div class="screen" id="screen-bulkpack">
       <div class="card" style="padding:12px;">
         <h3 style="margin-top:0;">📦 Массовое создание паспортов</h3>
-        <p style="font-size:13px;color:#666;">Добавьте строки кроя. ID и номера паспортов сформируются автоматически.</p>
-        <button class="action-btn btn-primary" onclick="addBulkPackRow()">➕ Добавить строку</button>
+        <p style="font-size:13px;color:#666;">Укажите общие данные и вставьте список из Excel или Google Таблиц. Каждая строка — отдельная пачка с фактическим количеством.</p>
+        <label for="bulkpack-date" style="font-size:13px;font-weight:600;display:block;margin:8px 0 5px;">Дата кроя</label>
+        <input type="date" id="bulkpack-date">
+        <label for="bulkpack-model" style="font-size:13px;font-weight:600;display:block;margin:8px 0 5px;">Модель</label>
+        <select id="bulkpack-model"><option value="">— Выберите модель —</option></select>
+        <label for="bulkpack-color" style="font-size:13px;font-weight:600;display:block;margin:8px 0 5px;">Цвет</label>
+        <input type="text" id="bulkpack-color" placeholder="Один цвет для всех пачек">
+        <label for="bulkpack-paste" style="font-size:13px;font-weight:600;display:block;margin:8px 0 5px;">Размер и количество</label>
+        <textarea id="bulkpack-paste" rows="9" placeholder="44    17&#10;44    23&#10;46    20" style="width:100%;box-sizing:border-box;font-size:16px;line-height:1.5;padding:12px;border:1px solid #ccc;border-radius:10px;resize:vertical;"></textarea>
+        <p style="font-size:12px;color:#777;margin:6px 0;">Можно скопировать две колонки целиком. Повторяющиеся размеры и разные количества разрешены.</p>
+        <button class="action-btn btn-primary" onclick="previewBulkPacks()">🔎 Проверить список</button>
       </div>
-      <div id="bulkpack-rows"></div>
-      <button id="bulkpack-submit" class="action-btn btn-success" onclick="submitBulkPacks()">✅ Создать все паспорта</button>
+      <div id="bulkpack-preview"></div>
+      <button id="bulkpack-submit" class="action-btn btn-success" onclick="submitBulkPacks()" style="display:none;">✅ Создать все паспорта</button>
       <div id="bulkpack-result"></div>
       <div class="loading" id="bulkpack-loading"><div class="spinner"></div><div>Создание...</div></div>
     </div>
@@ -1903,42 +1912,56 @@ function openDashboard(){
     var bulkPackModels=[];
     function openBulkPack(){
       showScreen('bulkpack','📦 Паспорта из кроя','Массовое создание');
-      document.getElementById('bulkpack-rows').innerHTML='';document.getElementById('bulkpack-result').innerHTML='';
+      document.getElementById('bulkpack-preview').innerHTML='';document.getElementById('bulkpack-result').innerHTML='';
+      document.getElementById('bulkpack-submit').style.display='none';
+      document.getElementById('bulkpack-date').value=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
+      document.getElementById('bulkpack-color').value='';document.getElementById('bulkpack-paste').value='';
       showLoading('bulkpack',true);
-      API.getModelList().then(function(models){bulkPackModels=models||[];showLoading('bulkpack',false);addBulkPackRow();})
+      API.getModelList().then(function(models){
+        bulkPackModels=models||[];var select=document.getElementById('bulkpack-model');
+        select.innerHTML='<option value="">— Выберите модель —</option>';
+        bulkPackModels.forEach(function(name){var o=document.createElement('option');o.value=name;o.textContent=name;select.appendChild(o);});
+        showLoading('bulkpack',false);
+      })
         .catch(function(e){showLoading('bulkpack',false);showToast('Ошибка: '+e.message,true);});
     }
-    function addBulkPackRow(){
-      var container=document.getElementById('bulkpack-rows');
-      if(container.children.length>=100){showToast('Не более 100 пачек за один раз',true);return;}
-      var row=document.createElement('div');row.className='card bulk-pack-row';row.style.padding='12px';
-      var top=document.createElement('div');top.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;';
-      var title=document.createElement('strong');title.textContent='Пачка '+(container.children.length+1);
-      var remove=document.createElement('button');remove.type='button';remove.textContent='✕';remove.setAttribute('aria-label','Удалить строку');remove.style.cssText='border:0;background:#ffebee;color:#c62828;border-radius:8px;min-width:44px;min-height:44px;font-size:18px;';
-      remove.onclick=function(){row.remove();renumberBulkPackRows();};top.append(title,remove);row.appendChild(top);
-      var date=document.createElement('input');date.type='date';date.className='bulk-cut-date';date.value=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
-      var model=document.createElement('select');model.className='bulk-model';var empty=document.createElement('option');empty.value='';empty.textContent='— Модель —';model.appendChild(empty);
-      bulkPackModels.forEach(function(name){var o=document.createElement('option');o.value=name;o.textContent=name;model.appendChild(o);});
-      var size=document.createElement('input');size.type='text';size.className='bulk-size';size.placeholder='Размер';
-      var color=document.createElement('input');color.type='text';color.className='bulk-color';color.placeholder='Цвет';
-      var qty=document.createElement('input');qty.type='number';qty.className='bulk-qty';qty.min='1';qty.inputMode='numeric';qty.placeholder='Количество';
-      [date,model,size,color,qty].forEach(function(el){el.style.marginBottom='8px';row.appendChild(el);});container.appendChild(row);
+    function parseBulkPackLines(){
+      var text=document.getElementById('bulkpack-paste').value;var rows=[];var errors=[];
+      text.split(/\r?\n/).forEach(function(raw,index){
+        var line=raw.trim();if(!line)return;
+        var parts=line.split(/\t|;|,|\s{2,}/).map(function(x){return x.trim();}).filter(Boolean);
+        if(parts.length<2){parts=line.split(/\s+/);}
+        var size=(parts[0]||'').trim();var qtyText=(parts[1]||'').replace(/\s/g,'').replace(',','.');var qty=Number(qtyText);
+        if(!size||!Number.isInteger(qty)||qty<=0)errors.push('Строка '+(index+1)+': «'+line+'»');
+        else rows.push({size:size,qty:qty});
+      });
+      return {rows:rows,errors:errors};
     }
-    function renumberBulkPackRows(){document.querySelectorAll('.bulk-pack-row strong').forEach(function(x,i){x.textContent='Пачка '+(i+1);});}
+    function previewBulkPacks(){
+      var parsed=parseBulkPackLines();var box=document.getElementById('bulkpack-preview');var submit=document.getElementById('bulkpack-submit');
+      if(parsed.errors.length){box.innerHTML='<div class="result-card error"><strong>Исправьте строки:</strong><br>'+parsed.errors.map(escapeHtml).join('<br>')+'</div>';submit.style.display='none';return null;}
+      if(!parsed.rows.length){showToast('Вставьте размеры и количество',true);box.innerHTML='';submit.style.display='none';return null;}
+      if(parsed.rows.length>100){showToast('Не более 100 пачек за один раз',true);submit.style.display='none';return null;}
+      var total=0;var bySize={};parsed.rows.forEach(function(r){total+=r.qty;bySize[r.size]=(bySize[r.size]||0)+r.qty;});
+      var html='<div class="card" style="padding:12px;"><h3 style="margin-top:0;">Проверка перед созданием</h3>'+
+        '<p><strong>Паспортов:</strong> '+parsed.rows.length+' &nbsp; <strong>Изделий:</strong> '+total+'</p>'+
+        '<div style="overflow:auto;max-height:360px;"><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="text-align:left;padding:6px;">№</th><th style="text-align:left;padding:6px;">Размер</th><th style="text-align:right;padding:6px;">Количество</th></tr></thead><tbody>';
+      parsed.rows.forEach(function(r,i){html+='<tr style="border-top:1px solid #eee;"><td style="padding:6px;">'+(i+1)+'</td><td style="padding:6px;">'+escapeHtml(r.size)+'</td><td style="padding:6px;text-align:right;">'+r.qty+'</td></tr>';});
+      html+='</tbody></table></div><p style="font-size:13px;color:#666;"><strong>По размерам:</strong> '+Object.keys(bySize).map(function(s){return escapeHtml(s)+': '+bySize[s];}).join(' · ')+'</p></div>';
+      box.innerHTML=html;submit.style.display='block';return parsed.rows;
+    }
     function submitBulkPacks(){
-      var rows=[];var cards=document.querySelectorAll('.bulk-pack-row');
-      for(var i=0;i<cards.length;i++){
-        var item={cutDate:cards[i].querySelector('.bulk-cut-date').value,model:cards[i].querySelector('.bulk-model').value,
-          size:cards[i].querySelector('.bulk-size').value.trim(),color:cards[i].querySelector('.bulk-color').value.trim(),qty:Number(cards[i].querySelector('.bulk-qty').value)};
-        if(!item.cutDate||!item.model||!item.size||!item.qty||item.qty<=0){showToast('Заполните дату, модель, размер и количество в строке '+(i+1),true);return;}rows.push(item);
-      }
-      if(!rows.length){showToast('Добавьте хотя бы одну пачку',true);return;}
+      var compact=previewBulkPacks();if(!compact)return;
+      var cutDate=document.getElementById('bulkpack-date').value;var model=document.getElementById('bulkpack-model').value;
+      var color=document.getElementById('bulkpack-color').value.trim();
+      if(!cutDate||!model){showToast('Выберите дату кроя и модель',true);return;}
+      var rows=compact.map(function(r){return {cutDate:cutDate,model:model,size:r.size,color:color,qty:r.qty};});
       if(!window.confirm('Создать '+rows.length+' пачек и присвоить им новые номера?'))return;
       showLoading('bulkpack',true);document.getElementById('bulkpack-submit').disabled=true;
       API.addPacksBulk(rows).then(function(r){showLoading('bulkpack',false);document.getElementById('bulkpack-submit').disabled=false;
         if(!r||!r.success){showToast((r&&r.message)||'Не удалось создать пачки',true);return;}
         document.getElementById('bulkpack-result').innerHTML='<div class="result-card success"><div class="result-icon">✅</div><div>'+escapeHtml(r.message)+'</div><button class="action-btn btn-orange" onclick="renderMultiplePassports(bulkCreatedPacks)">🖨️ Печать созданных паспортов</button></div>';
-        bulkCreatedPacks=r.packs||[];document.getElementById('bulkpack-rows').innerHTML='';
+        bulkCreatedPacks=r.packs||[];document.getElementById('bulkpack-preview').innerHTML='';document.getElementById('bulkpack-submit').style.display='none';
       }).catch(function(e){showLoading('bulkpack',false);document.getElementById('bulkpack-submit').disabled=false;showToast('Ошибка: '+e.message,true);});
     }
     var bulkCreatedPacks=[];
