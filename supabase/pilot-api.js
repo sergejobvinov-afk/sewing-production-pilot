@@ -149,7 +149,7 @@
   }
 
   function operationsForPack(packId) {
-    return table('pack_operations', 'select=operation_name,sewer_name,issued_qty,accepted_qty,paid_qty,paid_at,client_paid_qty,client_paid_at,issued_at,accepted_at,sewer_price&pack_id=eq.' + encodeURIComponent(packId) + '&order=id.asc')
+    return table('pack_operations', 'select=operation_name,sewer_name,issued_qty,accepted_qty,defect_qty,paid_qty,paid_at,client_paid_qty,client_paid_at,issued_at,accepted_at,sewer_price&pack_id=eq.' + encodeURIComponent(packId) + '&order=id.asc')
       .then(function (rows) {
         return rows.map(function (op) {
           return {
@@ -157,6 +157,7 @@
             sewer: op.sewer_name || '',
             issued: Number(op.issued_qty) || 0,
             accepted: Number(op.accepted_qty) || 0,
+            defect: Number(op.defect_qty) || 0,
             paidQty: Number(op.paid_qty) || 0,
             paidAt: op.paid_at || '',
             clientPaidQty: Number(op.client_paid_qty) || 0,

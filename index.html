@@ -1055,7 +1055,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-  <script src="supabase/pilot-api.js?v=proxy-1"></script>
+  <script src="supabase/pilot-api.js?v=acceptance-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1209,15 +1209,18 @@ function renderAcceptOperations(operations, packQty) {
   operations.forEach(function(op, idx) {
     var issued = Number(op.issued) || 0;
     var accepted = Number(op.accepted) || 0;
-    var remaining = Math.max(0, issued - accepted);
+    var defect = Number(op.defect) || 0;
+    var remaining = Math.max(0, issued - accepted - defect);
     if (remaining > 0) hasRemainingOperations = true;
     html += '<div class="card" style="margin-bottom:8px;">';
     html += '<div><strong>' + escapeHtml(op.name) + '</strong>' +
 (currentUser && currentUser.role === 'master' ? '' : ' (цена швеи: ' + (op.priceSewer || op.price) + ' ₽)') +
 '</div>';
-    html += '<div>Выдано: ' + issued + ' | Принято: ' + accepted + ' | Осталось: ' + remaining + '</div>';
+    html += '<div>Выдано: ' + issued + ' | Годных: ' + accepted + ' | Брак: ' + defect + ' | Осталось: ' + remaining + '</div>';
     if (remaining > 0) {
-      html += '<div style="margin-top:6px;">Принять: <input type="number" class="accept-op-qty" data-op="' + idx + '" min="0" max="' + remaining + '" value="" placeholder="' + remaining + '" inputmode="numeric" style="width:80px;"> шт.</div>';
+      html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">' +
+        '<label>Годных: <input type="number" class="accept-op-qty" data-op="' + idx + '" min="0" value="" placeholder="' + remaining + '" inputmode="numeric" style="width:78px;"></label>' +
+        '<label>Брак: <input type="number" class="accept-op-defect" data-op="' + idx + '" min="0" value="" placeholder="0" inputmode="numeric" style="width:72px;"></label></div>';
     } else {
       html += '<div style="margin-top:6px;color:#4caf50;font-weight:600;">✓ Операция полностью принята</div>';
     }
@@ -1238,23 +1241,32 @@ function submitAcceptWithOps() {
   var inputs = document.querySelectorAll('#accept-ops-list .accept-op-qty');
   var acceptedByOperation = [];
   var acceptedItems = 0;
+  var defectItems = 0;
+  var overages = [];
   for (var i = 0; i < inputs.length; i++) {
-    var qty = parseInt(inputs[i].value, 10);
-    var maxQty = parseInt(inputs[i].max, 10);
-    if (isNaN(qty) || qty < 0 || qty > maxQty) {
+    var qty = inputs[i].value === '' ? 0 : parseInt(inputs[i].value, 10);
+    var defectInput = document.querySelector('.accept-op-defect[data-op="' + inputs[i].getAttribute('data-op') + '"]');
+    var defectQty = !defectInput || defectInput.value === '' ? 0 : parseInt(defectInput.value, 10);
+    if (isNaN(qty) || qty < 0 || isNaN(defectQty) || defectQty < 0) {
       showToast('Проверьте количество для операции ' + (i + 1), true);
       inputs[i].focus();
       return;
     }
-    if (qty > 0) {
+    if (qty > 0 || defectQty > 0) {
       var operationIndex = parseInt(inputs[i].getAttribute('data-op'), 10);
-      var opName = packData['accept'].operations[operationIndex].name;
-      acceptedByOperation.push({ operationName: opName, acceptedQty: qty });
+      var operation = packData['accept'].operations[operationIndex];
+      var opName = operation.name;
+      var remaining = Math.max(0,(Number(operation.issued)||0)-(Number(operation.accepted)||0)-(Number(operation.defect)||0));
+      if(qty+defectQty>remaining)overages.push(opName+': на '+(qty+defectQty-remaining)+' шт.');
+      acceptedByOperation.push({ operationName: opName, acceptedQty: qty, defectQty: defectQty });
       acceptedItems = Math.max(acceptedItems, qty);
+      defectItems += defectQty;
     }
   }
   if (acceptedByOperation.length === 0) { showToast('Укажите количество для приёмки', true); return; }
-  if (!window.confirm('Подтвердить приёмку ОТК: до ' + acceptedItems + ' шт. по ' + acceptedByOperation.length + ' оп.?')) return;
+  var confirmText='Подтвердить приёмку ОТК: до '+acceptedItems+' годных, брак '+defectItems+' шт. по '+acceptedByOperation.length+' оп.?';
+  if(overages.length)confirmText+='\n\nВНИМАНИЕ: количество превышает остаток:\n'+overages.join('\n')+'\n\nРазрешить приёмку сверх выданного?';
+  if (!window.confirm(confirmText)) return;
   var submitButton = document.getElementById('btn-submit-accept-ops');
   if (submitButton) submitButton.disabled = true;
   showLoading('accept', true);
@@ -2419,8 +2431,8 @@ function renderSewerPacks(packs) {
   
   var html = '<div style="display:flex;flex-direction:column;gap:12px;">';
   packs.forEach(function(p, idx) {
-    var statusColor = p.status === 'Выдано' ? '#2196f3' : '#4caf50';
-    var statusText = p.status === 'Выдано' ? 'В пошиве' : 'Принято ОТК';
+    var statusColor = p.status === 'Выдано' ? '#2196f3' : (p.status === 'Частично принято' ? '#ff9800' : '#4caf50');
+    var statusText = p.status === 'Выдано' ? 'В пошиве' : p.status;
     html += '<div class="card" style="margin-bottom:0;">';
     html += '<div style="font-weight:700;font-size:16px;">📦 ' + escapeHtml(p.id) + '</div>';
     html += '<div style="font-size:13px;color:#666;">Модель: ' + escapeHtml(p.model) + ' | Размер: ' + escapeHtml(p.size) + ' | Цвет: ' + escapeHtml(p.color || '—') + '</div>';
@@ -2430,7 +2442,7 @@ function renderSewerPacks(packs) {
     if (p.status === 'Выдано') {
       html += '<div style="font-size:12px;color:#888;margin-top:4px;">Выдана: ' + escapeHtml(formatDate(p.issuedDate)) + '</div>';
     } else {
-      html += '<div style="font-size:12px;color:#888;margin-top:4px;">Принято: ' + escapeHtml(p.otkQty) + ' из ' + escapeHtml(p.qty) + ' шт.</div>';
+      html += '<div style="font-size:12px;color:#888;margin-top:4px;">Годных: ' + escapeHtml(p.otkQty) + ' из ' + escapeHtml(p.qty) + ' шт. | Брак: ' + escapeHtml(p.defectQty||0) + '</div>';
       html += '<div style="font-size:12px;color:#888;">Дата приёмки: ' + escapeHtml(formatDate(p.acceptedDate)) + '</div>';
     }
     html += '<button class="action-btn btn-secondary" style="margin-top:8px;padding:8px;" onclick="checkStatus(sewerPacksCache[' + idx + '].id)">🔍 Подробнее</button>';
