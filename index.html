@@ -1055,7 +1055,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-  <script src="supabase/pilot-api.js?v=acceptance-1"></script>
+<script src="supabase/pilot-api.js?v=progress-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1809,11 +1809,14 @@ function cutSliceStats(rows){
   rows.forEach(function(p){
     var qty=Number(p.qty)||0,issued=p.status==='Выдано'||p.status==='Частично принято'||p.status==='Принято';
     var inWork=p.status==='Выдано'||p.status==='Частично принято',accepted=p.status==='Принято';
+    var acceptedQty=Number(p.acceptedQty)||0,remainingQty=issued?Number(p.remainingQty):qty;
+    if(!isFinite(remainingQty))remainingQty=qty;
     stats.packs++;stats.items+=qty;
     if(issued){stats.issuedPacks++;stats.issuedItems+=qty;}
-    if(inWork){stats.inWorkPacks++;stats.inWorkItems+=qty;}
-    if(accepted){stats.acceptedPacks++;stats.acceptedItems+=qty;}
-    else{stats.remainingPacks++;stats.remainingItems+=qty;}
+    if(inWork){stats.inWorkPacks++;stats.inWorkItems+=remainingQty;}
+    if(accepted){stats.acceptedPacks++;}
+    stats.acceptedItems+=acceptedQty;
+    if(remainingQty>0){stats.remainingPacks++;stats.remainingItems+=remainingQty;}
   });
   return stats;
 }

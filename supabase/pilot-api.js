@@ -306,17 +306,26 @@
 
     getAllPacks: function () {
       return table('packs', 'select=*&order=cut_date.desc,id.desc').then(function (packs) {
-        return table('operation_catalog', 'select=model,operation_name&active=eq.true&order=sequence_no.asc,id.asc')
-          .then(function (catalog) {
+        return Promise.all([
+          table('operation_catalog', 'select=model,operation_name&active=eq.true&order=sequence_no.asc,id.asc'),
+          table('pack_operations', 'select=pack_id,issued_qty,accepted_qty,defect_qty&issued_qty=gt.0')
+        ]).then(function (result) {
+            var catalog=result[0],operationRows=result[1];
             var byModel = {};
             catalog.forEach(function (op) {
               if (!byModel[op.model]) byModel[op.model] = [];
               byModel[op.model].push({ operation_name: op.operation_name });
             });
+            var progressByPack={};
+            operationRows.forEach(function(op){
+              var accepted=Number(op.accepted_qty)||0,processed=accepted+(Number(op.defect_qty)||0);
+              if(!progressByPack[op.pack_id])progressByPack[op.pack_id]={acceptedQty:accepted,processedQty:processed};
+              else{progressByPack[op.pack_id].acceptedQty=Math.min(progressByPack[op.pack_id].acceptedQty,accepted);progressByPack[op.pack_id].processedQty=Math.min(progressByPack[op.pack_id].processedQty,processed);}
+            });
             return {
               success: true,
               count: packs.length,
-              packs: packs.map(function (pack) { return packDto(pack, byModel[pack.model]); })
+              packs: packs.map(function (pack) {var dto=packDto(pack,byModel[pack.model]),progress=progressByPack[pack.id]||{acceptedQty:0,processedQty:0};dto.acceptedQty=progress.acceptedQty;dto.processedQty=progress.processedQty;dto.remainingQty=Math.max(0,dto.qty-progress.processedQty);return dto;})
             };
           });
       });
