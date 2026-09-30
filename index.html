@@ -848,6 +848,7 @@ var QRGen=(function(){
       <div class="card" style="padding:12px;">
         <h3 style="margin-top:0;">💳 Массовая оплата операций</h3>
         <input id="payments-search" type="text" placeholder="Паспорт, пачка, операция или швея" oninput="renderPaymentsList()">
+        <select id="payments-model" onchange="renderPaymentsList()" style="margin-top:8px;"><option value="">Все модели</option></select>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
           <select id="payments-sewer" onchange="renderPaymentsList()"><option value="">Все швеи</option></select>
           <select id="payments-filter" onchange="renderPaymentsList()">
@@ -1057,7 +1058,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-<script src="supabase/pilot-api.js?v=catalog-operations-1"></script>
+<script src="supabase/pilot-api.js?v=payment-model-filter-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1713,6 +1714,9 @@ function openPayments(){
     showLoading('payments',false);
     if(!r||!r.success){showToast((r&&r.message)||'Не удалось загрузить операции',true);return;}
     paymentOperationsCache=r.operations||[];
+    var models=Array.from(new Set(paymentOperationsCache.map(function(x){return x.model;}).filter(Boolean))).sort();
+    var modelSelect=document.getElementById('payments-model');modelSelect.innerHTML='<option value="">Все модели</option>';
+    models.forEach(function(name){var o=document.createElement('option');o.value=name;o.textContent=name;modelSelect.appendChild(o);});
     var sewers=Array.from(new Set(paymentOperationsCache.map(function(x){return x.sewerName;}).filter(Boolean))).sort();
     var select=document.getElementById('payments-sewer');select.innerHTML='<option value="">Все швеи</option>';
     sewers.forEach(function(name){var o=document.createElement('option');o.value=name;o.textContent=name;select.appendChild(o);});
@@ -1721,9 +1725,11 @@ function openPayments(){
 }
 function filteredPaymentOperations(){
   var q=(document.getElementById('payments-search').value||'').trim().toLowerCase();
+  var model=document.getElementById('payments-model').value;
   var sewer=document.getElementById('payments-sewer').value;
   var mode=document.getElementById('payments-filter').value;
   return paymentOperationsCache.filter(function(op){
+    if(model&&op.model!==model)return false;
     if(sewer&&op.sewerName!==sewer)return false;
     var text=[op.packId,op.passport,op.model,op.operationName,op.sewerName].join(' ').toLowerCase();
     if(q&&text.indexOf(q)<0)return false;
@@ -1743,7 +1749,7 @@ function renderPaymentsList(){
     h+='<label class="card" style="display:flex;gap:10px;align-items:flex-start;margin-bottom:8px;cursor:pointer;">';
     h+='<input type="checkbox" class="payment-row-check" data-key="'+key+'" style="width:24px;height:24px;flex:none;">';
     h+='<div style="min-width:0;"><div style="font-weight:700;">'+escapeHtml(op.packId)+' · '+escapeHtml(op.operationName)+'</div>';
-    h+='<div style="font-size:13px;color:#666;">Паспорт: '+escapeHtml(op.passport||'—')+' · Швея: '+escapeHtml(op.sewerName)+'</div>';
+    h+='<div style="font-size:13px;color:#666;">Модель: '+escapeHtml(op.model||'—')+' · Паспорт: '+escapeHtml(op.passport||'—')+' · Швея: '+escapeHtml(op.sewerName)+'</div>';
     h+='<div style="font-size:13px;">Принято: '+escapeHtml(op.acceptedQty)+' шт.</div>';
     h+='<div style="font-size:12px;color:'+(Number(op.sewerPaidQty)>=Number(op.acceptedQty)?'#2e7d32':'#c62828')+';">Швее: '+escapeHtml(op.sewerPaidQty)+'/'+escapeHtml(op.acceptedQty)+' · '+escapeHtml(formatNum(Number(op.sewerPaidQty)*Number(op.sewerPrice||0)))+' ₽</div>';
     h+='<div style="font-size:12px;color:'+(Number(op.clientPaidQty)>=Number(op.acceptedQty)?'#2e7d32':'#c62828')+';">Заказчиком: '+escapeHtml(op.clientPaidQty)+'/'+escapeHtml(op.acceptedQty)+' · '+escapeHtml(formatNum(Number(op.clientPaidQty)*Number(op.clientPrice||0)))+' ₽</div></div></label>';
