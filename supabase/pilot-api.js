@@ -398,6 +398,9 @@
     copyCatalogModel: function (sourceModel, newModel) {
       return rpc('copy_catalog_model', { p_source_model: sourceModel, p_new_model: newModel }).then(unwrapRpc);
     },
+    deleteCatalogOperation: function (id) {
+      return rpc('delete_catalog_operation', { p_id: Number(id) }).then(unwrapRpc);
+    },
     getPaymentOperations: function () {
       return rpc('get_payment_operations', {}).then(unwrapRpc);
     },
