@@ -363,8 +363,14 @@
     },
 
     getSewerList: function () {
-      return table('pack_operations', 'select=sewer_name&sewer_name=not.is.null&order=sewer_name.asc').then(function (rows) {
-        return Array.from(new Set(rows.map(function (row) { return row.sewer_name; }).filter(Boolean)));
+      return Promise.all([
+        table('profiles', 'select=display_name,active&role=eq.sewer&order=display_name.asc'),
+        table('pack_operations', 'select=sewer_name&sewer_name=not.is.null&order=sewer_name.asc')
+      ]).then(function (result) {
+        var profiles=result[0],history=result[1],inactive=new Set(),names=[];
+        profiles.forEach(function(row){if(row.active)names.push(row.display_name);else inactive.add(row.display_name);});
+        history.forEach(function(row){if(row.sewer_name&&!inactive.has(row.sewer_name))names.push(row.sewer_name);});
+        return Array.from(new Set(names.filter(Boolean))).sort();
       });
     },
     getDashboardData: function () {
