@@ -871,6 +871,28 @@ var QRGen=(function(){
       <div class="loading" id="payments-loading"><div class="spinner"></div><div>Обработка...</div></div>
     </div>
 
+    <!-- ===== SEWER PERIOD REPORT ===== -->
+    <div class="screen" id="screen-sewer-report">
+      <div class="card" style="padding:12px;">
+        <h3 style="margin-top:0;">🧵 Отчёт по швее</h3>
+        <label for="sewer-report-sewer" style="font-size:13px;font-weight:600;">Швея</label>
+        <select id="sewer-report-sewer" style="margin-top:5px;"><option value="">— Выберите швею —</option></select>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;">
+          <label style="font-size:13px;font-weight:600;">С<input id="sewer-report-from" type="date" style="margin-top:5px;"></label>
+          <label style="font-size:13px;font-weight:600;">По<input id="sewer-report-to" type="date" style="margin-top:5px;"></label>
+        </div>
+        <label for="sewer-report-kind" style="display:block;font-size:13px;font-weight:600;margin-top:10px;">Период считать по</label>
+        <select id="sewer-report-kind" style="margin-top:5px;">
+          <option value="accepted">Дате приёмки ОТК</option>
+          <option value="issued">Дате выдачи в пошив</option>
+          <option value="paid">Дате оплаты швее</option>
+        </select>
+        <button class="action-btn btn-primary" onclick="loadSewerReport()">📊 Сформировать отчёт</button>
+      </div>
+      <div id="sewer-report-result"></div>
+      <div class="loading" id="sewer-report-loading"><div class="spinner"></div><div>Формирование...</div></div>
+    </div>
+
     <!-- ===== ADD PACK SCREEN ===== -->
     <div class="screen" id="screen-addpack">
       <div class="card">
@@ -1318,6 +1340,9 @@ function submitAcceptWithOps() {
         btns += menuBtn('btn-dashboard', '📊', 'Дашборд', 'Финансы, производство, швеи', 'openDashboard()');
         btns += menuBtn('btn-status', '💳', 'Оплата операций', 'Массовая оплата швеям и от заказчика', 'openPayments()');
         btns += menuBtn('', '🧮', 'Расчёт стоимости', 'Цена заказчику и плановая прибыль', 'openCostCalculator()');
+      }
+      if (role === 'admin' || role === 'master' || role === 'accountant') {
+        btns += menuBtn('btn-dashboard', '🧵', 'Отчёт по швее', 'Выдано, принято, брак и оплата за период', 'openSewerReport()');
       }
       if (role === 'admin') {
         btns += menuBtn('', '🧾', 'Модели и расценки', 'Операции, цены и порядок', 'openCatalogAdmin()');
@@ -1772,6 +1797,51 @@ function bulkPayment(kind,paid){
   showLoading('payments',true);
   API.setOperationsPayment(items,kind,paid).then(function(r){showLoading('payments',false);showToast(r.message,!r.success);if(r.success)openPayments();})
     .catch(function(e){showLoading('payments',false);showToast('Ошибка: '+e.message,true);});
+}
+
+function reportIsoDate(date){
+  var y=date.getFullYear(),m=String(date.getMonth()+1).padStart(2,'0'),d=String(date.getDate()).padStart(2,'0');
+  return y+'-'+m+'-'+d;
+}
+function openSewerReport(){
+  showScreen('sewer-report','🧵 Отчёт по швее','Выдача, приёмка, брак и оплата');
+  var now=new Date(),first=new Date(now.getFullYear(),now.getMonth(),1);
+  document.getElementById('sewer-report-from').value=reportIsoDate(first);
+  document.getElementById('sewer-report-to').value=reportIsoDate(now);
+  document.getElementById('sewer-report-result').innerHTML='';
+  var select=document.getElementById('sewer-report-sewer');
+  select.innerHTML='<option value="">— Выберите швею —</option>';
+  API.getSewerList(currentUser.pin).then(function(sewers){
+    sewers.forEach(function(name){var option=document.createElement('option');option.value=name;option.textContent=name;select.appendChild(option);});
+  }).catch(function(e){showToast('Ошибка загрузки списка: '+e.message,true);});
+}
+function loadSewerReport(){
+  var sewer=document.getElementById('sewer-report-sewer').value;
+  var from=document.getElementById('sewer-report-from').value,to=document.getElementById('sewer-report-to').value;
+  var kind=document.getElementById('sewer-report-kind').value;
+  if(!sewer){showToast('Выберите швею',true);return;}
+  if(!from||!to||from>to){showToast('Проверьте период',true);return;}
+  showLoading('sewer-report',true);document.getElementById('sewer-report-result').innerHTML='';
+  API.getSewerPeriodReport(sewer,from,to,kind).then(function(r){
+    showLoading('sewer-report',false);renderSewerReport(r);
+  }).catch(function(e){showLoading('sewer-report',false);showToast('Ошибка: '+e.message,true);});
+}
+function renderSewerReport(r){
+  if(!r||!r.success){showToast((r&&r.message)||'Не удалось сформировать отчёт',true);return;}
+  var summary=r.summary||[],details=r.details||[],totals={packs:0,issued:0,accepted:0,defect:0,remaining:0,paid:0};
+  summary.forEach(function(x){totals.packs+=Number(x.packCount)||0;totals.issued+=Number(x.issuedQty)||0;totals.accepted+=Number(x.acceptedQty)||0;totals.defect+=Number(x.defectQty)||0;totals.remaining+=Number(x.remainingQty)||0;totals.paid+=Number(x.paidQty)||0;});
+  var h='<div class="card"><strong>'+escapeHtml(r.sewerName)+'</strong><div style="font-size:13px;color:#666;">'+escapeHtml(r.dateFrom)+' — '+escapeHtml(r.dateTo)+'</div>';
+  h+='<div class="dash-grid" style="margin-top:12px;">'+dashItem(totals.issued,'Выдано, шт.','')+dashItem(totals.accepted,'Принято, шт.','')+dashItem(totals.defect,'Брак, шт.','')+dashItem(totals.remaining,'Осталось, шт.','')+'</div></div>';
+  summary.forEach(function(x){
+    var paid=Number(x.paidQty)||0,accepted=Number(x.acceptedQty)||0,color=paid>=accepted&&accepted>0?'#2e7d32':paid>0?'#ef6c00':'#c62828';
+    h+='<div class="card"><h3 style="margin-top:0;">'+escapeHtml(x.model)+'</h3><div>Пачек: <strong>'+escapeHtml(x.packCount)+'</strong></div>';
+    h+='<div>Выдано: '+escapeHtml(x.issuedQty)+' · Принято: '+escapeHtml(x.acceptedQty)+' · Брак: '+escapeHtml(x.defectQty)+' · Осталось: '+escapeHtml(x.remainingQty)+'</div>';
+    h+='<div style="color:'+color+';font-weight:600;margin-top:6px;">'+escapeHtml(x.paymentStatus)+' — '+paid+'/'+accepted+' шт.'+(x.lastPaidAt?' · '+escapeHtml(formatDate(x.lastPaidAt)):'')+'</div></div>';
+  });
+  if(details.length){h+='<details class="card"><summary style="font-weight:700;cursor:pointer;">Подробно по паспортам и операциям ('+details.length+')</summary>';
+    details.forEach(function(x){h+='<div style="padding:10px 0;border-bottom:1px solid #eee;"><strong>'+escapeHtml(x.packId)+' · '+escapeHtml(x.model)+'</strong><div style="font-size:13px;">'+escapeHtml(x.operationName)+' · выдано '+escapeHtml(x.issuedQty)+' · принято '+escapeHtml(x.acceptedQty)+' · брак '+escapeHtml(x.defectQty)+'</div><div style="font-size:12px;color:'+(x.paymentStatus==='Оплачено'?'#2e7d32':'#c62828')+';">'+escapeHtml(x.paymentStatus)+(x.paidAt?' · оплачено '+escapeHtml(formatDate(x.paidAt)):'')+'</div></div>';});
+    h+='</details>';}
+  document.getElementById('sewer-report-result').innerHTML=h||'<div class="card">За выбранный период данных нет.</div>';
 }
 
 function cancelCurrentIssue(){

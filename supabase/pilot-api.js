@@ -410,6 +410,14 @@
     getPaymentOperations: function () {
       return rpc('get_payment_operations', {}).then(unwrapRpc);
     },
+    getSewerPeriodReport: function (sewerName, dateFrom, dateTo, dateKind) {
+      return rpc('get_sewer_period_report', {
+        p_sewer_name: sewerName,
+        p_date_from: dateFrom,
+        p_date_to: dateTo,
+        p_date_kind: dateKind || 'accepted'
+      }).then(unwrapRpc);
+    },
     setOperationsPayment: function (items, kind, paid) {
       return rpc('set_operations_payment', { p_items: items, p_kind: kind, p_paid: paid !== false }).then(unwrapRpc);
     },
