@@ -1872,7 +1872,8 @@ function exportSewerReportExcel(){
 function exportSewerReportSheets(){
   if(!lastSewerReport){showToast('Сначала сформируйте отчёт',true);return;}
   var text=sewerReportRows(lastSewerReport).map(function(row){return row.map(function(v){return reportCell(v,'\t');}).join('\t');}).join('\n');
-  var openSheet=function(){window.open('https://docs.google.com/spreadsheets/u/0/create','_blank','noopener');showToast('Данные скопированы. В новой таблице нажмите «Вставить»');};
+  var sheetWindow=window.open('about:blank','_blank');
+  var openSheet=function(){if(sheetWindow)sheetWindow.location.href='https://docs.google.com/spreadsheets/u/0/create';else showToast('Разрешите всплывающие окна и повторите',true);showToast('Данные скопированы. В новой таблице нажмите «Вставить»');};
   if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(openSheet).catch(function(){fallbackCopyReport(text,openSheet);});}
   else fallbackCopyReport(text,openSheet);
 }
