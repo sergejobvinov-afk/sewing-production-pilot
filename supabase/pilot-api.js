@@ -134,6 +134,35 @@
 
   function statusLabel(value) { return STATUS_LABELS[value] || value || 'Новая'; }
   function dateText(value) { return value ? String(value).slice(0, 10) : ''; }
+  function sewerReportFromRows(sewerName, dateFrom, dateTo, dateKind, operations, packs) {
+    var packById = {};
+    packs.forEach(function (pack) { packById[pack.id] = pack; });
+    var details = operations.map(function (op) {
+      var pack = packById[op.pack_id] || {};
+      var accepted = Number(op.accepted_qty) || 0, paid = Number(op.paid_qty) || 0;
+      return { packId: op.pack_id, passport: pack.passport_no || '', model: pack.model || 'Без модели', operationName: op.operation_name,
+        issuedQty: Number(op.issued_qty) || 0, acceptedQty: accepted, defectQty: Number(op.defect_qty) || 0,
+        remainingQty: Math.max(0,(Number(op.issued_qty)||0)-accepted-(Number(op.defect_qty)||0)), paidQty: paid,
+        issuedAt: op.issued_at, acceptedAt: op.accepted_at, paidAt: op.paid_at,
+        paymentStatus: accepted === 0 ? 'Нет приёмки' : paid >= accepted ? 'Оплачено' : paid > 0 ? 'Частично оплачено' : 'Не оплачено' };
+    });
+    var byPack = {}, byModel = {};
+    details.forEach(function (row) {
+      var key = row.model + '\n' + row.packId;
+      if (!byPack[key]) byPack[key] = { model: row.model, issuedQty: row.issuedQty, acceptedQty: row.acceptedQty,
+        defectQty: 0, processedQty: row.acceptedQty + row.defectQty, paidQty: row.paidQty, lastPaidAt: row.paidAt };
+      else { byPack[key].issuedQty=Math.max(byPack[key].issuedQty,row.issuedQty);byPack[key].acceptedQty=Math.min(byPack[key].acceptedQty,row.acceptedQty);
+        byPack[key].processedQty=Math.min(byPack[key].processedQty,row.acceptedQty+row.defectQty);byPack[key].paidQty=Math.min(byPack[key].paidQty,row.paidQty);
+        if(row.paidAt&&(!byPack[key].lastPaidAt||row.paidAt>byPack[key].lastPaidAt))byPack[key].lastPaidAt=row.paidAt; }
+      byPack[key].defectQty += row.defectQty;
+    });
+    Object.keys(byPack).forEach(function (key) { var row=byPack[key], model=byModel[row.model]||(byModel[row.model]={model:row.model,packCount:0,issuedQty:0,acceptedQty:0,defectQty:0,remainingQty:0,paidQty:0,lastPaidAt:null});
+      model.packCount++;model.issuedQty+=row.issuedQty;model.acceptedQty+=row.acceptedQty;model.defectQty+=row.defectQty;
+      model.remainingQty+=Math.max(0,row.issuedQty-row.processedQty);model.paidQty+=row.paidQty;
+      if(row.lastPaidAt&&(!model.lastPaidAt||row.lastPaidAt>model.lastPaidAt))model.lastPaidAt=row.lastPaidAt; });
+    var summary=Object.keys(byModel).sort().map(function(key){var row=byModel[key];row.paymentStatus=row.acceptedQty===0?'Нет приёмки':row.paidQty>=row.acceptedQty?'Оплачено':row.paidQty>0?'Частично оплачено':'Не оплачено';return row;});
+    return { success:true,sewerName:sewerName,dateFrom:dateFrom,dateTo:dateTo,dateKind:dateKind,summary:summary,details:details };
+  }
   function packDto(pack, operations) {
     return {
       id: pack.id,
@@ -416,7 +445,14 @@
         p_date_from: dateFrom,
         p_date_to: dateTo,
         p_date_kind: dateKind || 'accepted'
-      }).then(unwrapRpc);
+      }).then(unwrapRpc).catch(function (rpcError) {
+        var field = dateKind === 'issued' ? 'issued_at' : dateKind === 'paid' ? 'paid_at' : 'accepted_at';
+        var query='select=pack_id,operation_name,issued_qty,accepted_qty,defect_qty,paid_qty,issued_at,accepted_at,paid_at,sewer_name'+
+          '&sewer_name=eq.'+encodeURIComponent(sewerName)+'&'+field+'=gte.'+dateFrom+'T00:00:00Z&'+field+'=lte.'+dateTo+'T23:59:59.999Z&order='+field+'.asc';
+        return Promise.all([table('pack_operations',query),table('packs','select=id,model,passport_no,status&status=neq.annulled')])
+          .then(function(result){return sewerReportFromRows(sewerName,dateFrom,dateTo,dateKind||'accepted',result[0],result[1]);})
+          .catch(function(){throw rpcError;});
+      });
     },
     setOperationsPayment: function (items, kind, paid) {
       return rpc('set_operations_payment', { p_items: items, p_kind: kind, p_paid: paid !== false }).then(unwrapRpc);
