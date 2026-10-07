@@ -888,6 +888,10 @@ var QRGen=(function(){
           <option value="paid">Дате оплаты швее</option>
         </select>
         <button class="action-btn btn-primary" onclick="loadSewerReport()">📊 Сформировать отчёт</button>
+        <div id="sewer-report-export" style="display:none;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
+          <button class="action-btn btn-success" onclick="exportSewerReportExcel()" style="margin:0;">📥 Excel</button>
+          <button class="action-btn btn-secondary" onclick="exportSewerReportSheets()" style="margin:0;">📋 Google Sheets</button>
+        </div>
       </div>
       <div id="sewer-report-result"></div>
       <div class="loading" id="sewer-report-loading"><div class="spinner"></div><div>Формирование...</div></div>
@@ -1803,12 +1807,14 @@ function reportIsoDate(date){
   var y=date.getFullYear(),m=String(date.getMonth()+1).padStart(2,'0'),d=String(date.getDate()).padStart(2,'0');
   return y+'-'+m+'-'+d;
 }
+var lastSewerReport=null;
 function openSewerReport(){
   showScreen('sewer-report','🧵 Отчёт по швее','Выдача, приёмка, брак и оплата');
   var now=new Date(),first=new Date(now.getFullYear(),now.getMonth(),1);
   document.getElementById('sewer-report-from').value=reportIsoDate(first);
   document.getElementById('sewer-report-to').value=reportIsoDate(now);
   document.getElementById('sewer-report-result').innerHTML='';
+  document.getElementById('sewer-report-export').style.display='none';lastSewerReport=null;
   var select=document.getElementById('sewer-report-sewer');
   select.innerHTML='<option value="">— Выберите швею —</option>';
   API.getSewerList(currentUser.pin).then(function(sewers){
@@ -1828,6 +1834,7 @@ function loadSewerReport(){
 }
 function renderSewerReport(r){
   if(!r||!r.success){showToast((r&&r.message)||'Не удалось сформировать отчёт',true);return;}
+  lastSewerReport=r;document.getElementById('sewer-report-export').style.display='grid';
   var summary=r.summary||[],details=r.details||[],totals={packs:0,issued:0,accepted:0,defect:0,remaining:0,paid:0};
   summary.forEach(function(x){totals.packs+=Number(x.packCount)||0;totals.issued+=Number(x.issuedQty)||0;totals.accepted+=Number(x.acceptedQty)||0;totals.defect+=Number(x.defectQty)||0;totals.remaining+=Number(x.remainingQty)||0;totals.paid+=Number(x.paidQty)||0;});
   var h='<div class="card"><strong>'+escapeHtml(r.sewerName)+'</strong><div style="font-size:13px;color:#666;">'+escapeHtml(r.dateFrom)+' — '+escapeHtml(r.dateTo)+'</div>';
@@ -1842,6 +1849,36 @@ function renderSewerReport(r){
     details.forEach(function(x){h+='<div style="padding:10px 0;border-bottom:1px solid #eee;"><strong>'+escapeHtml(x.packId)+' · '+escapeHtml(x.model)+'</strong><div style="font-size:13px;">'+escapeHtml(x.operationName)+' · выдано '+escapeHtml(x.issuedQty)+' · принято '+escapeHtml(x.acceptedQty)+' · брак '+escapeHtml(x.defectQty)+'</div><div style="font-size:12px;color:'+(x.paymentStatus==='Оплачено'?'#2e7d32':'#c62828')+';">'+escapeHtml(x.paymentStatus)+(x.paidAt?' · оплачено '+escapeHtml(formatDate(x.paidAt)):'')+'</div></div>';});
     h+='</details>';}
   document.getElementById('sewer-report-result').innerHTML=h||'<div class="card">За выбранный период данных нет.</div>';
+}
+
+function sewerReportRows(r){
+  var rows=[['Отчёт по швее',r.sewerName||''],['Период',(r.dateFrom||'')+' — '+(r.dateTo||'')],[],['Сводка по моделям'],['Модель','Пачек','Выдано','Принято','Брак','Осталось','Оплачено','Статус оплаты','Дата последней оплаты']];
+  (r.summary||[]).forEach(function(x){rows.push([x.model,x.packCount,x.issuedQty,x.acceptedQty,x.defectQty,x.remainingQty,x.paidQty,x.paymentStatus,x.lastPaidAt?formatDate(x.lastPaidAt):'']);});
+  rows.push([],['Подробно по операциям'],['Паспорт / пачка','Модель','Операция','Выдано','Принято','Брак','Оплачено','Статус оплаты','Дата оплаты']);
+  (r.details||[]).forEach(function(x){rows.push([x.packId,x.model,x.operationName,x.issuedQty,x.acceptedQty,x.defectQty,x.paidQty==null?'':x.paidQty,x.paymentStatus,x.paidAt?formatDate(x.paidAt):'']);});
+  return rows;
+}
+function reportCell(value,separator){
+  var text=String(value==null?'':value).replace(/\r?\n/g,' ');
+  return separator==='\t'?text.replace(/\t/g,' '):'"'+text.replace(/"/g,'""')+'"';
+}
+function exportSewerReportExcel(){
+  if(!lastSewerReport){showToast('Сначала сформируйте отчёт',true);return;}
+  var content='\uFEFF'+sewerReportRows(lastSewerReport).map(function(row){return row.map(function(v){return reportCell(v,';');}).join(';');}).join('\r\n');
+  var blob=new Blob([content],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download='Отчёт_'+String(lastSewerReport.sewerName||'швея').replace(/[^a-zа-яё0-9_-]+/gi,'_')+'_'+lastSewerReport.dateFrom+'_'+lastSewerReport.dateTo+'.csv';
+  document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(url);},1000);showToast('Файл для Excel сохранён');
+}
+function exportSewerReportSheets(){
+  if(!lastSewerReport){showToast('Сначала сформируйте отчёт',true);return;}
+  var text=sewerReportRows(lastSewerReport).map(function(row){return row.map(function(v){return reportCell(v,'\t');}).join('\t');}).join('\n');
+  var openSheet=function(){window.open('https://docs.google.com/spreadsheets/u/0/create','_blank','noopener');showToast('Данные скопированы. В новой таблице нажмите «Вставить»');};
+  if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(openSheet).catch(function(){fallbackCopyReport(text,openSheet);});}
+  else fallbackCopyReport(text,openSheet);
+}
+function fallbackCopyReport(text,done){
+  var area=document.createElement('textarea');area.value=text;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();
+  try{document.execCommand('copy');done();}catch(e){showToast('Не удалось скопировать данные',true);}area.remove();
 }
 
 function cancelCurrentIssue(){
