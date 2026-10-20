@@ -163,6 +163,36 @@
     var summary=Object.keys(byModel).sort().map(function(key){var row=byModel[key];row.paymentStatus=row.acceptedQty===0?'Нет приёмки':row.paidQty>=row.acceptedQty?'Оплачено':row.paidQty>0?'Частично оплачено':'Не оплачено';return row;});
     return { success:true,sewerName:sewerName,dateFrom:dateFrom,dateTo:dateTo,dateKind:dateKind,summary:summary,details:details };
   }
+  function dashboardFromRows(dateFrom,dateTo,dateKind,model,packs,operations,role){
+    function inPeriod(value){var d=dateText(value);return !!d&&d>=dateFrom&&d<=dateTo;}
+    var opsByPack={};operations.forEach(function(op){(opsByPack[op.pack_id]||(opsByPack[op.pack_id]=[])).push(op);});
+    var scoped=packs.filter(function(p){
+      if(p.status==='annulled'||(model&&p.model!==model))return false;
+      if(dateKind==='cut')return inPeriod(p.cut_date);
+      return (opsByPack[p.id]||[]).some(function(op){return inPeriod(op[dateKind+'_at']);});
+    }),scopeIds=new Set(scoped.map(function(p){return p.id;}));
+    var eventOps=operations.filter(function(op){if(!scopeIds.has(op.pack_id))return false;return dateKind==='cut'||inPeriod(op[dateKind+'_at']);});
+    var production={totalPacks:0,totalQty:0,newPacks:0,newQty:0,issuedPacks:0,issuedQty:0,inProgressPacks:0,inProgressQty:0,acceptedPacks:0,totalOtk:0,remainingQty:0,operationDefects:0,overQty:0};
+    var modelMap={},sizeMap={};
+    scoped.forEach(function(p){
+      var qty=Number(p.quantity)||0,ops=(opsByPack[p.id]||[]).filter(function(op){return Number(op.issued_qty)>0;});
+      var accepted=ops.length?Math.min.apply(null,ops.map(function(op){return Number(op.accepted_qty)||0;})):0;
+      var processed=ops.length?Math.min.apply(null,ops.map(function(op){return(Number(op.accepted_qty)||0)+(Number(op.defect_qty)||0);})):0;
+      var remaining=Math.max(qty-processed,0),issued=p.status==='issued'||p.status==='partially_accepted'||p.status==='accepted',inWork=p.status==='issued'||p.status==='partially_accepted';
+      production.totalPacks++;production.totalQty+=qty;production.totalOtk+=accepted;production.remainingQty+=remaining;production.overQty+=Math.max(processed-qty,0);
+      production.operationDefects+=ops.reduce(function(sum,op){return sum+(Number(op.defect_qty)||0);},0);
+      if(p.status==='new'){production.newPacks++;production.newQty+=qty;}if(issued){production.issuedPacks++;production.issuedQty+=qty;}if(inWork){production.inProgressPacks++;production.inProgressQty+=remaining;}if(p.status==='accepted')production.acceptedPacks++;
+      [[modelMap,p.model||'Не указано','model'],[sizeMap,p.size||'Не указано','size']].forEach(function(g){var row=g[0][g[1]]||(g[0][g[1]]={packs:0,items:0,issued:0,in_work:0,accepted:0,remaining:0});row[g[2]]=g[1];row.packs++;row.items+=qty;if(issued)row.issued+=qty;if(inWork)row.in_work+=remaining;row.accepted+=accepted;row.remaining+=remaining;});
+    });
+    var finance={revenue:0,clientPaid:0,clientDue:0,zp:0,paidZp:0,totalZp:0,contribution:0,margin:0},sewerMap={};
+    eventOps.forEach(function(op){var accepted=Number(op.accepted_qty)||0,paid=Number(op.paid_qty)||0,clientPaid=Number(op.client_paid_qty)||0,sewerPrice=Number(op.sewer_price)||0,clientPrice=Number(op.client_price)||0;
+      finance.revenue+=accepted*clientPrice;finance.clientPaid+=clientPaid*clientPrice;finance.clientDue+=(accepted-clientPaid)*clientPrice;finance.zp+=(accepted-paid)*sewerPrice;finance.paidZp+=paid*sewerPrice;finance.totalZp+=accepted*sewerPrice;finance.contribution+=accepted*(clientPrice-sewerPrice);
+      var name=op.sewer_name||'Не назначена',s=sewerMap[name]||(sewerMap[name]={name:name,operationQty:0,due:0,paid:0});s.operationQty+=accepted;s.due+=(accepted-paid)*sewerPrice;s.paid+=paid*sewerPrice;
+    });
+    finance.margin=finance.revenue?Math.round(finance.contribution*1000/finance.revenue)/10:0;
+    if(role==='master')Object.keys(finance).forEach(function(k){finance[k]=0;});
+    return{success:true,production:production,finance:finance,sewers:Object.keys(sewerMap).map(function(k){return sewerMap[k];}).sort(function(a,b){return b.due-a.due;}),models:Object.keys(modelMap).sort().map(function(k){return modelMap[k];}),sizes:Object.keys(sizeMap).sort().map(function(k){return sizeMap[k];})};
+  }
   function packDto(pack, operations) {
     return {
       id: pack.id,
@@ -404,6 +434,20 @@
     },
     getDashboardData: function () {
       return rpc('get_dashboard_data', {}).then(unwrapRpc);
+    },
+    getDashboardDataFiltered: function (dateFrom, dateTo, dateKind, model) {
+      return rpc('get_dashboard_data_filtered', {
+        p_date_from: dateFrom,
+        p_date_to: dateTo,
+        p_date_kind: dateKind || 'cut',
+        p_model: model || null
+      }).then(unwrapRpc).catch(function(rpcError){
+        return Promise.all([
+          table('packs','select=id,cut_date,model,size,quantity,status'),
+          table('pack_operations','select=pack_id,sewer_name,issued_qty,accepted_qty,defect_qty,paid_qty,client_paid_qty,issued_at,accepted_at,paid_at,sewer_price,client_price')
+        ]).then(function(rows){return dashboardFromRows(dateFrom,dateTo,dateKind||'cut',model||'',rows[0],rows[1],window.currentUser&&window.currentUser.role);})
+          .catch(function(){throw rpcError;});
+      });
     },
     getCostCalculatorData: function () {
       return rpc('get_cost_calculator_data', {}).then(unwrapRpc);
