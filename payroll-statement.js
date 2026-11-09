@@ -241,17 +241,24 @@
   }
   function print() {
     if (!allowed() || !state.statement) return;
-    var w = root.open('', '_blank');
-    if (!w) { root.showToast('Разрешите всплывающие окна для печати ведомости', true); return; }
-    var s = state.statement;
-    w.document.write('<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Выплата ' + date(s.statementDate) + '</title>' +
-      '<style>body{font:13px Arial,sans-serif;color:#222;margin:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:7px;text-align:right}th:first-child,td:first-child{text-align:left}caption{text-align:left;margin:12px 0}p{line-height:1.5}.toolbar button{padding:12px;font-size:16px}@page{size:A4 landscape;margin:12mm}@media print{.toolbar{display:none}thead{display:table-header-group}tr{break-inside:avoid}}</style></head><body>' +
-      '<div class="toolbar"><button onclick="window.print()">Печать / Сохранить PDF</button></div><h1>Выплата ' + date(s.statementDate) + '</h1><h2>' + html(s.sewerName) + '</h2>' +
+    var existing = root.document.getElementById('payroll-print-preview');
+    if (existing) existing.close();
+    var s = state.statement, preview = root.document.createElement('dialog');
+    preview.id = 'payroll-print-preview';
+    preview.setAttribute('aria-label', 'Печать ведомости');
+    preview.innerHTML = '<style>#payroll-print-preview{width:min(1200px,95vw);max-width:95vw;max-height:90vh;margin:auto;padding:20px;border:0;border-radius:12px;overflow:auto;color:#222;background:white}#payroll-print-preview::backdrop{background:rgba(0,0,0,.45)}.payroll-print-toolbar{display:flex;gap:10px;position:sticky;top:-20px;background:white;padding:12px 0;z-index:1}.payroll-print-toolbar button{padding:12px;font-size:16px;cursor:pointer}.payroll-print-body{overflow-x:auto}.payroll-print-body p{line-height:1.5;font-size:13px;margin:10px 0}@media print{@page{size:A4 landscape;margin:12mm}body.payroll-printing> :not(#payroll-print-preview){display:none!important}#payroll-print-preview{display:block!important;position:static;inset:auto;width:auto;max-width:none;max-height:none;margin:0;padding:0;overflow:visible;border:0}.payroll-print-toolbar{display:none!important}.payroll-print-body{overflow:visible}.payroll-print-body thead{display:table-header-group}.payroll-print-body tr{break-inside:avoid}#payroll-print-preview::backdrop{display:none}}</style>' +
+      '<div class="payroll-print-toolbar"><button type="button" data-print>Печать / Сохранить PDF</button><button type="button" data-close autofocus>Закрыть предпросмотр</button></div>' +
+      '<div class="payroll-print-body"><h1>Выплата ' + date(s.statementDate) + '</h1><h2>' + html(s.sewerName) + '</h2>' +
       '<p>Модель: ' + html(s.options.model || 'Все модели') + '. Дата кроя: ' + (s.options.cutFrom ? date(s.options.cutFrom) : 'Все даты') + ' — ' +
       (s.options.cutTo ? date(s.options.cutTo) : 'Все даты') + '. Сформировано: ' + html(new Date(s.generatedAt).toLocaleString('ru-RU')) + '.</p>' +
       '<p>Расчётная ведомость по текущим данным. Дата выплаты — реквизит документа. Формирование не отмечает операции оплаченными. Итого = (принято − оплачено) × расценка.</p>' +
-      statementTable(s, true) + '<p>Количество указано по операциям. Разные расценки показаны отдельными строками.</p></body></html>');
-    w.document.close();
+      statementTable(s, true) + '<p>Количество указано по операциям. Разные расценки показаны отдельными строками.</p></div>';
+    preview.querySelector('[data-print]').addEventListener('click', function () { root.print(); });
+    preview.querySelector('[data-close]').addEventListener('click', function () { preview.close(); });
+    preview.addEventListener('close', function () { root.document.body.classList.remove('payroll-printing'); preview.remove(); });
+    root.document.body.appendChild(preview);
+    root.document.body.classList.add('payroll-printing');
+    preview.showModal();
   }
   return { build: build, cents: cents, delimited: delimited, exportRows: exportRows, open: open, load: load, render: render, clear: clear,
     exportExcel: exportExcel, copySheets: copySheets, print: print };
