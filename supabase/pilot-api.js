@@ -119,6 +119,19 @@
     return request('/rest/v1/' + name + '?' + query, { method: 'GET' });
   }
 
+  // Stable ordering is supplied by the caller. Keep pages below the API row cap.
+  function tableAll(name, query) {
+    var rows = [], pageSize = 500;
+    function next() {
+      return table(name, query + '&limit=' + pageSize + '&offset=' + rows.length).then(function (page) {
+        if (!Array.isArray(page)) throw new Error('Не удалось загрузить полные данные ведомости');
+        rows = rows.concat(page);
+        return page.length === pageSize ? next() : rows;
+      });
+    }
+    return next();
+  }
+
   function rpc(name, body) {
     return request('/rest/v1/rpc/' + name, { method: 'POST', body: JSON.stringify(body || {}) });
   }
@@ -485,6 +498,38 @@
     },
     getPaymentOperations: function () {
       return rpc('get_payment_operations', {}).then(unwrapRpc);
+    },
+    getPayrollStatementOperations: function (sewerName) {
+      if (!sewerName) return Promise.reject(new Error('Выберите швею'));
+      // The finance RPC enforces permissions and supplies the same full financial
+      // snapshot used by Payments. Direct rows add cut dates and issued counts.
+      return rpc('get_payment_operations', {}).then(unwrapRpc).then(function (payments) {
+        if (!payments || !payments.success || !Array.isArray(payments.operations)) throw new Error('Не удалось сверить данные оплаты');
+        var query = 'select=id,pack_id,operation_name,sewer_name,issued_qty,accepted_qty,paid_qty,sewer_price,packs!inner(cut_date,model,passport_no,status)' +
+          '&sewer_name=eq.' + encodeURIComponent(sewerName) + '&order=id.asc';
+        return tableAll('pack_operations', query).then(function (rows) {
+          var financial = new Map(), seen = new Set();
+          payments.operations.filter(function (op) { return op.sewerName === sewerName; }).forEach(function (op) {
+            var key = JSON.stringify([op.packId, op.operationName]);
+            if (financial.has(key)) throw new Error('Обнаружена повторная операция в расчёте');
+            financial.set(key, op);
+          });
+          var operations = rows.map(function (row) {
+            var pack = row.packs, key = JSON.stringify([row.pack_id, row.operation_name]), op = financial.get(key);
+            if (!pack || seen.has(key)) throw new Error('Не удалось однозначно сопоставить паспорт и операцию');
+            seen.add(key);
+            if ((Number(row.accepted_qty) > 0 || op) && (!op || Number(op.acceptedQty) !== Number(row.accepted_qty) ||
+                Number(op.sewerPaidQty) !== Number(row.paid_qty) || Number(op.sewerPrice) !== Number(row.sewer_price) || op.model !== pack.model)) {
+              throw new Error('Данные приёмки или оплаты изменились. Обновите ведомость');
+            }
+            return { packId: row.pack_id, passport: pack.passport_no, model: pack.model, cutDate: pack.cut_date,
+              operationName: row.operation_name, sewerName: sewerName, issuedQty: row.issued_qty,
+              acceptedQty: row.accepted_qty, sewerPaidQty: row.paid_qty, sewerPrice: row.sewer_price, packStatus: pack.status };
+          });
+          financial.forEach(function (op, key) { if (!seen.has(key)) throw new Error('Не все операции оплаты попали в ведомость. Обновите данные'); });
+          return { success: true, operations: operations, generatedAt: new Date().toISOString() };
+        });
+      });
     },
     getSewerPeriodReport: function (sewerName, dateFrom, dateTo, dateKind) {
       return rpc('get_sewer_period_report', {

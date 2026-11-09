@@ -382,6 +382,22 @@ var QRGen=(function(){
     .back-btn.visible { display: block; }
     
     .container { max-width: 480px; margin: 0 auto; padding: 16px; }
+    body.payroll-wide .container { max-width: 1200px; }
+    .payroll-filters { display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px; }
+    .payroll-filters label { font-size:13px;font-weight:600;min-width:0; }
+    .payroll-filters input,.payroll-filters select { margin-top:5px;width:100%; }
+    .payroll-note { font-size:13px;color:#666;line-height:1.5;margin-top:8px; }
+    .payroll-scroll { overflow-x:auto; }
+    .payroll-table { width:100%;border-collapse:collapse;font-size:13px; }
+    .payroll-table caption { text-align:left;font-weight:700;margin-bottom:10px; }
+    .payroll-table th,.payroll-table td { padding:9px 7px;border-bottom:1px solid #ddd;text-align:right;vertical-align:top; }
+    .payroll-table th:first-child,.payroll-table td:first-child { text-align:left; }
+    .payroll-table td:nth-child(2) { white-space:nowrap; }
+    .payroll-table thead,.payroll-table tfoot { background:#f1f3ff; }
+    .payroll-table summary { text-align:left;cursor:pointer;padding:8px 0;color:#465bb5; }
+    .payroll-table details table { min-width:500px;margin:10px 0; }
+    #payroll-exports { display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px; }
+    #payroll-exports[hidden] { display:none; }
     .screen { display: none; }
     .screen.active { display: block; }
     
@@ -847,6 +863,7 @@ var QRGen=(function(){
     <div class="screen" id="screen-payments">
       <div class="card" style="padding:12px;">
         <h3 style="margin-top:0;">💳 Массовая оплата операций</h3>
+        <button id="payments-payroll" class="action-btn btn-primary" onclick="openPayrollStatement(document.getElementById('payments-sewer').value)">🧾 Ведомость выплаты по швее</button>
         <input id="payments-search" type="text" placeholder="Паспорт, пачка, операция или швея" oninput="renderPaymentsList()">
         <select id="payments-model" onchange="renderPaymentsList()" style="margin-top:8px;"><option value="">Все модели</option></select>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
@@ -869,6 +886,31 @@ var QRGen=(function(){
         </div>
       </div>
       <div class="loading" id="payments-loading"><div class="spinner"></div><div>Обработка...</div></div>
+    </div>
+
+    <!-- ===== PAYROLL RECONCILIATION STATEMENT ===== -->
+    <div class="screen" id="screen-payroll">
+      <div class="card">
+        <h3>🧾 Ведомость выплаты</h3>
+        <div class="payroll-filters">
+          <label>Швея<select id="payroll-sewer" onchange="clearPayrollStatement()"><option value="">— Выберите швею —</option></select></label>
+          <label>Дата ведомости<input id="payroll-date" type="date" onchange="renderPayrollStatement()"></label>
+          <label>Модель<select id="payroll-model" onchange="renderPayrollStatement()"><option value="">Все модели</option></select></label>
+          <label>Дата кроя с<input id="payroll-cut-from" type="date" onchange="renderPayrollStatement()"></label>
+          <label>Дата кроя по<input id="payroll-cut-to" type="date" onchange="renderPayrollStatement()"></label>
+          <label>Показать<select id="payroll-mode" onchange="renderPayrollStatement()"><option value="due">Строки с остатком к оплате</option><option value="all">Все строки, включая оплаченные</option></select></label>
+          <label>Сортировка<select id="payroll-sort" onchange="renderPayrollStatement()"><option value="cut_asc">Дата кроя: сначала старые</option><option value="cut_desc">Дата кроя: сначала новые</option><option value="model_asc">Модель: А → Я</option><option value="model_desc">Модель: Я → А</option></select></label>
+        </div>
+        <button class="action-btn btn-primary" onclick="loadPayrollStatement()">Сформировать / Обновить данные</button>
+        <p class="payroll-note">Дата ведомости — реквизит документа. Расчёт показывает текущую задолженность на момент формирования. Формирование и печать не отмечают операции оплаченными. Выберите «Все строки» для сверки полностью оплаченной и ещё не принятой работы.</p>
+        <div id="payroll-exports" hidden>
+          <button class="action-btn btn-success" onclick="exportPayrollStatement()">📥 Excel (CSV)</button>
+          <button class="action-btn btn-secondary" onclick="copyPayrollStatementSheets()">📋 Для Google Sheets</button>
+          <button class="action-btn btn-secondary" onclick="printPayrollStatement()">🖨️ Печать / PDF</button>
+        </div>
+      </div>
+      <div id="payroll-result" aria-live="polite"></div>
+      <div class="loading" id="payroll-loading"><div class="spinner"></div><div>Формирование ведомости...</div></div>
     </div>
 
     <!-- ===== SEWER PERIOD REPORT ===== -->
@@ -1084,7 +1126,8 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-<script src="supabase/pilot-api.js?v=payroll-dashboard-2"></script>
+<script src="supabase/pilot-api.js?v=payroll-statement-1"></script>
+<script src="payroll-statement.js?v=payroll-statement-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1343,6 +1386,7 @@ function submitAcceptWithOps() {
       if (role === 'admin' || role === 'accountant') {
         btns += menuBtn('btn-dashboard', '📊', 'Дашборд', 'Финансы, производство, швеи', 'openDashboard()');
         btns += menuBtn('btn-status', '💳', 'Оплата операций', 'Массовая оплата швеям и от заказчика', 'openPayments()');
+        if(typeof API.getPayrollStatementOperations==='function')btns += menuBtn('', '🧾', 'Ведомость выплаты', 'Сверка: модель, дата кроя, операция и расценка', 'openPayrollStatement()');
         btns += menuBtn('', '🧮', 'Расчёт стоимости', 'Цена заказчику и плановая прибыль', 'openCostCalculator()');
       }
       if (role === 'admin' || role === 'master' || role === 'accountant') {
@@ -1364,6 +1408,7 @@ function submitAcceptWithOps() {
 
     // ===== NAVIGATION =====
     function showScreen(id, title, sub) {
+      document.body.classList.toggle('payroll-wide',id==='payroll');
       document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('active');});
       document.getElementById('screen-' + id).classList.add('active');
       document.getElementById('headerTitle').textContent = title || 'Швейное производство';
@@ -1736,6 +1781,7 @@ function setOperationPayment(index,paid){
 
 var paymentOperationsCache=[];
 function openPayments(){
+  document.getElementById('payments-payroll').style.display=typeof API.getPayrollStatementOperations==='function'?'':'none';
   showScreen('payments','💳 Оплата операций','Массовая обработка');
   showLoading('payments',true);
   document.getElementById('payments-list').innerHTML='';
