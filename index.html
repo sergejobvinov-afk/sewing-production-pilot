@@ -1084,7 +1084,7 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-<script src="supabase/pilot-api.js?v=user-create-fix-1"></script>
+<script src="supabase/pilot-api.js?v=payroll-dashboard-1"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1944,9 +1944,13 @@ function loadDashboard(){
     if(Number(p.operationDefects)>0)h+='<div style="font-size:12px;color:#c62828;margin-top:8px;">Дефекты по операциям: '+escapeHtml(p.operationDefects)+' шт. Один предмет может учитываться на нескольких операциях.</div>';
     h+='</div><div class="dash-section"><h3>📦 Пачки</h3><div class="dash-grid">'+dashItem(p.totalPacks||0,'Всего','')+dashItem(p.newPacks||0,'Не выдано','')+dashItem(p.issuedPacks||0,'Выдано хотя бы раз','')+dashItem(p.inProgressPacks||0,'Сейчас в пошиве','')+dashItem(p.acceptedPacks||0,'Принято','')+'</div></div>';
     if(currentUser.role!=='master'){
-      h+='<div class="dash-section"><h3>💰 Финансы</h3><div class="dash-grid">'+dashItem(formatNum(f.revenue||0)+' ₽','Начислено заказчику','')+dashItem(formatNum(f.clientPaid||0)+' ₽','Оплачено заказчиком','')+dashItem(formatNum(f.clientDue||0)+' ₽','Долг заказчика','')+dashItem(formatNum(f.totalZp||0)+' ₽','Начислено швеям','')+dashItem(formatNum(f.paidZp||0)+' ₽','Оплачено швеям','')+dashItem(formatNum(f.zp||0)+' ₽','Долг по зарплате','')+dashItem(formatNum(f.contribution||0)+' ₽','Доход после сдельной оплаты','profit')+dashItem((f.margin||0)+'%','Маржа после сдельной оплаты','')+'</div><div style="font-size:12px;color:#666;margin-top:8px;">Это не чистая прибыль: материалы, налоги и накладные расходы здесь не вычтены.</div></div>';
+      h+='<div class="dash-section"><h3>💰 Финансы</h3><div class="dash-grid">'+dashItem(formatNum(f.payrollDueAllTime||0)+' ₽','К выплате всего','')+dashItem(formatNum(f.zp||0)+' ₽','К выплате в выбранном периоде','')+dashItem(formatNum(f.revenue||0)+' ₽','Начислено заказчику','')+dashItem(formatNum(f.clientPaid||0)+' ₽','Оплачено заказчиком','')+dashItem(formatNum(f.clientDue||0)+' ₽','Долг заказчика','')+dashItem(formatNum(f.totalZp||0)+' ₽','Начислено швеям за период','')+dashItem(formatNum(f.paidZp||0)+' ₽','Оплачено швеям за период','')+dashItem(formatNum(f.contribution||0)+' ₽','Доход после сдельной оплаты','profit')+dashItem((f.margin||0)+'%','Маржа после сдельной оплаты','')+'</div><div style="font-size:12px;color:#666;margin-top:8px;"><strong>«К выплате всего»</strong> — вся текущая неоплаченная задолженность и должна совпадать с разделом «Оплата операций». Остальные показатели рассчитаны за выбранный период. Это не чистая прибыль: материалы, налоги и накладные расходы здесь не вычтены.</div></div>';
     }
-    if(d.sewers&&d.sewers.length){h+='<details class="dash-section"><summary style="font-weight:700;cursor:pointer;">👩‍🔧 Швеи ('+d.sewers.length+')</summary>';d.sewers.forEach(function(s){h+='<div class="sewer-row"><div class="sewer-name">'+escapeHtml(s.name)+'</div><div class="sewer-stats">'+(currentUser.role==='master'?'':'<div class="zp">К выплате: '+escapeHtml(formatNum(s.due||0))+' ₽</div><div>Оплачено: '+escapeHtml(formatNum(s.paid||0))+' ₽</div>')+'<div>Выполнено операций: '+escapeHtml(s.operationQty||0)+' шт.</div></div></div>';});h+='</details>';}
+    var periodSewers={},allTimeSewers={},sewerNames=[];
+    (d.sewers||[]).forEach(function(s){periodSewers[s.name]=s;if(sewerNames.indexOf(s.name)<0)sewerNames.push(s.name);});
+    (d.payrollSewers||[]).forEach(function(s){allTimeSewers[s.name]=s;if(sewerNames.indexOf(s.name)<0)sewerNames.push(s.name);});
+    sewerNames.sort(function(a,b){return Number((allTimeSewers[b]||{}).due||0)-Number((allTimeSewers[a]||{}).due||0);});
+    if(sewerNames.length){h+='<details class="dash-section"><summary style="font-weight:700;cursor:pointer;">👩‍🔧 Швеи ('+sewerNames.length+')</summary>';sewerNames.forEach(function(name){var s=periodSewers[name]||{},total=allTimeSewers[name]||{};h+='<div class="sewer-row"><div class="sewer-name">'+escapeHtml(name)+'</div><div class="sewer-stats">'+(currentUser.role==='master'?'':'<div class="zp">К выплате всего: '+escapeHtml(formatNum(total.due||0))+' ₽</div><div>В выбранном периоде: '+escapeHtml(formatNum(s.due||0))+' ₽</div><div>Оплачено в периоде: '+escapeHtml(formatNum(s.paid||0))+' ₽</div>')+'<div>Принято операций в периоде: '+escapeHtml(s.operationQty||0)+' шт.</div></div></div>';});h+='</details>';}
     h+=dashboardBreakdown(d.models,'По моделям','Модель')+dashboardBreakdown(d.sizes,'По размерам','Размер');
     document.getElementById('dashboard-results').innerHTML=h;
   }).catch(function(e){showLoading('dashboard',false);document.getElementById('dashboard-results').innerHTML='<div class="result-card error"><div class="result-icon">❌</div><div>Ошибка: '+escapeHtml(e.message)+'</div></div>';});

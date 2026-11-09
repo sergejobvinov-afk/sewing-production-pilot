@@ -184,14 +184,15 @@
       if(p.status==='new'){production.newPacks++;production.newQty+=qty;}if(issued){production.issuedPacks++;production.issuedQty+=qty;}if(inWork){production.inProgressPacks++;production.inProgressQty+=remaining;}if(p.status==='accepted')production.acceptedPacks++;
       [[modelMap,p.model||'Не указано','model'],[sizeMap,p.size||'Не указано','size']].forEach(function(g){var row=g[0][g[1]]||(g[0][g[1]]={packs:0,items:0,issued:0,in_work:0,accepted:0,remaining:0});row[g[2]]=g[1];row.packs++;row.items+=qty;if(issued)row.issued+=qty;if(inWork)row.in_work+=remaining;row.accepted+=accepted;row.remaining+=remaining;});
     });
-    var finance={revenue:0,clientPaid:0,clientDue:0,zp:0,paidZp:0,totalZp:0,contribution:0,margin:0},sewerMap={};
+    var finance={revenue:0,clientPaid:0,clientDue:0,zp:0,paidZp:0,totalZp:0,contribution:0,margin:0,payrollDueAllTime:0},sewerMap={},payrollMap={};
     eventOps.forEach(function(op){var accepted=Number(op.accepted_qty)||0,paid=Number(op.paid_qty)||0,clientPaid=Number(op.client_paid_qty)||0,sewerPrice=Number(op.sewer_price)||0,clientPrice=Number(op.client_price)||0;
       finance.revenue+=accepted*clientPrice;finance.clientPaid+=clientPaid*clientPrice;finance.clientDue+=(accepted-clientPaid)*clientPrice;finance.zp+=(accepted-paid)*sewerPrice;finance.paidZp+=paid*sewerPrice;finance.totalZp+=accepted*sewerPrice;finance.contribution+=accepted*(clientPrice-sewerPrice);
       var name=op.sewer_name||'Не назначена',s=sewerMap[name]||(sewerMap[name]={name:name,operationQty:0,due:0,paid:0});s.operationQty+=accepted;s.due+=(accepted-paid)*sewerPrice;s.paid+=paid*sewerPrice;
     });
+    operations.forEach(function(op){var due=(Number(op.accepted_qty)-Number(op.paid_qty))*Number(op.sewer_price||0);if(due<=0)return;finance.payrollDueAllTime+=due;var name=op.sewer_name||'Не назначена';payrollMap[name]=(payrollMap[name]||0)+due;});
     finance.margin=finance.revenue?Math.round(finance.contribution*1000/finance.revenue)/10:0;
     if(role==='master')Object.keys(finance).forEach(function(k){finance[k]=0;});
-    return{success:true,production:production,finance:finance,sewers:Object.keys(sewerMap).map(function(k){return sewerMap[k];}).sort(function(a,b){return b.due-a.due;}),models:Object.keys(modelMap).sort().map(function(k){return modelMap[k];}),sizes:Object.keys(sizeMap).sort().map(function(k){return sizeMap[k];})};
+    return{success:true,production:production,finance:finance,sewers:Object.keys(sewerMap).map(function(k){return sewerMap[k];}).sort(function(a,b){return b.due-a.due;}),payrollSewers:Object.keys(payrollMap).map(function(k){return{name:k,due:role==='master'?0:payrollMap[k]};}).sort(function(a,b){return b.due-a.due;}),models:Object.keys(modelMap).sort().map(function(k){return modelMap[k];}),sizes:Object.keys(sizeMap).sort().map(function(k){return sizeMap[k];})};
   }
   function packDto(pack, operations) {
     return {
