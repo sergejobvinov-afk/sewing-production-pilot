@@ -163,7 +163,7 @@
     var summary=Object.keys(byModel).sort().map(function(key){var row=byModel[key];row.paymentStatus=row.acceptedQty===0?'Нет приёмки':row.paidQty>=row.acceptedQty?'Оплачено':row.paidQty>0?'Частично оплачено':'Не оплачено';return row;});
     return { success:true,sewerName:sewerName,dateFrom:dateFrom,dateTo:dateTo,dateKind:dateKind,summary:summary,details:details };
   }
-  function dashboardFromRows(dateFrom,dateTo,dateKind,model,packs,operations,role){
+  function dashboardFromRows(dateFrom,dateTo,dateKind,model,packs,operations,role,payrollOperations){
     function inPeriod(value){var d=dateText(value);return !!d&&d>=dateFrom&&d<=dateTo;}
     var opsByPack={};operations.forEach(function(op){(opsByPack[op.pack_id]||(opsByPack[op.pack_id]=[])).push(op);});
     var scoped=packs.filter(function(p){
@@ -189,7 +189,7 @@
       finance.revenue+=accepted*clientPrice;finance.clientPaid+=clientPaid*clientPrice;finance.clientDue+=(accepted-clientPaid)*clientPrice;finance.zp+=(accepted-paid)*sewerPrice;finance.paidZp+=paid*sewerPrice;finance.totalZp+=accepted*sewerPrice;finance.contribution+=accepted*(clientPrice-sewerPrice);
       var name=op.sewer_name||'Не назначена',s=sewerMap[name]||(sewerMap[name]={name:name,operationQty:0,due:0,paid:0});s.operationQty+=accepted;s.due+=(accepted-paid)*sewerPrice;s.paid+=paid*sewerPrice;
     });
-    operations.forEach(function(op){var due=(Number(op.accepted_qty)-Number(op.paid_qty))*Number(op.sewer_price||0);if(due<=0)return;finance.payrollDueAllTime+=due;var name=op.sewer_name||'Не назначена';payrollMap[name]=(payrollMap[name]||0)+due;});
+    (payrollOperations||operations).forEach(function(op){var due=(Number(op.acceptedQty!==undefined?op.acceptedQty:op.accepted_qty)-Number(op.sewerPaidQty!==undefined?op.sewerPaidQty:op.paid_qty))*Number(op.sewerPrice!==undefined?op.sewerPrice:op.sewer_price||0);if(due<=0)return;finance.payrollDueAllTime+=due;var name=op.sewerName||op.sewer_name||'Не назначена';payrollMap[name]=(payrollMap[name]||0)+due;});
     finance.margin=finance.revenue?Math.round(finance.contribution*1000/finance.revenue)/10:0;
     if(role==='master')Object.keys(finance).forEach(function(k){finance[k]=0;});
     return{success:true,production:production,finance:finance,sewers:Object.keys(sewerMap).map(function(k){return sewerMap[k];}).sort(function(a,b){return b.due-a.due;}),payrollSewers:Object.keys(payrollMap).map(function(k){return{name:k,due:role==='master'?0:payrollMap[k]};}).sort(function(a,b){return b.due-a.due;}),models:Object.keys(modelMap).sort().map(function(k){return modelMap[k];}),sizes:Object.keys(sizeMap).sort().map(function(k){return sizeMap[k];})};
@@ -443,10 +443,12 @@
         p_date_kind: dateKind || 'cut',
         p_model: model || null
       }).then(unwrapRpc).catch(function(rpcError){
+        var payrollPromise=window.currentUser&&window.currentUser.role==='master'?Promise.resolve([]):rpc('get_payment_operations',{}).then(unwrapRpc).then(function(r){return r.operations||[];});
         return Promise.all([
           table('packs','select=id,cut_date,model,size,quantity,status'),
-          table('pack_operations','select=pack_id,sewer_name,issued_qty,accepted_qty,defect_qty,paid_qty,client_paid_qty,issued_at,accepted_at,paid_at,sewer_price,client_price')
-        ]).then(function(rows){return dashboardFromRows(dateFrom,dateTo,dateKind||'cut',model||'',rows[0],rows[1],window.currentUser&&window.currentUser.role);})
+          table('pack_operations','select=pack_id,sewer_name,issued_qty,accepted_qty,defect_qty,paid_qty,client_paid_qty,issued_at,accepted_at,paid_at,sewer_price,client_price'),
+          payrollPromise
+        ]).then(function(rows){return dashboardFromRows(dateFrom,dateTo,dateKind||'cut',model||'',rows[0],rows[1],window.currentUser&&window.currentUser.role,rows[2]);})
           .catch(function(){throw rpcError;});
       });
     },
