@@ -455,14 +455,13 @@
         p_date_to: dateTo,
         p_date_kind: dateKind || 'cut',
         p_model: model || null
-      }).then(unwrapRpc).catch(function(rpcError){
+      }).then(unwrapRpc).catch(function(){
         var payrollPromise=window.currentUser&&window.currentUser.role==='master'?Promise.resolve([]):rpc('get_payment_operations',{}).then(unwrapRpc).then(function(r){return r.operations||[];});
         return Promise.all([
-          table('packs','select=id,cut_date,model,size,quantity,status'),
-          table('pack_operations','select=pack_id,sewer_name,issued_qty,accepted_qty,defect_qty,paid_qty,client_paid_qty,issued_at,accepted_at,paid_at,sewer_price,client_price'),
+          tableAll('packs','select=id,cut_date,model,size,quantity,status&order=id.asc'),
+          tableAll('pack_operations','select=pack_id,sewer_name,issued_qty,accepted_qty,defect_qty,paid_qty,client_paid_qty,issued_at,accepted_at,paid_at,sewer_price,client_price&order=id.asc'),
           payrollPromise
-        ]).then(function(rows){return dashboardFromRows(dateFrom,dateTo,dateKind||'cut',model||'',rows[0],rows[1],window.currentUser&&window.currentUser.role,rows[2]);})
-          .catch(function(){throw rpcError;});
+        ]).then(function(rows){return dashboardFromRows(dateFrom,dateTo,dateKind||'cut',model||'',rows[0],rows[1],window.currentUser&&window.currentUser.role,rows[2]);});
       });
     },
     getCostCalculatorData: function () {
