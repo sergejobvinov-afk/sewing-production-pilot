@@ -388,6 +388,10 @@ var QRGen=(function(){
     .payroll-filters input,.payroll-filters select { margin-top:5px;width:100%; }
     .payroll-note { font-size:13px;color:#666;line-height:1.5;margin-top:8px; }
     .payroll-scroll { overflow-x:auto; }
+    #work-export[hidden] { display:none; }
+    .work-op-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;margin-top:12px; }
+    .work-op-card { padding:12px;border:1px solid #ddd;border-radius:10px;min-width:0;overflow-wrap:anywhere; }
+    .work-op-card p { margin-top:8px;font-size:14px; }
     .payroll-table { width:100%;border-collapse:collapse;font-size:13px; }
     .payroll-table caption { text-align:left;font-weight:700;margin-bottom:10px; }
     .payroll-table th,.payroll-table td { padding:9px 7px;border-bottom:1px solid #ddd;text-align:right;vertical-align:top; }
@@ -915,6 +919,27 @@ var QRGen=(function(){
       <div class="loading" id="payroll-loading"><div class="spinner"></div><div>Формирование ведомости...</div></div>
     </div>
 
+    <!-- ===== OUTSTANDING ISSUED WORK ===== -->
+    <div class="screen" id="screen-work-report">
+      <div class="card">
+        <h3>🧵 В работе — не принято</h3>
+        <div class="payroll-filters">
+          <label>Швея<select id="work-sewer" onchange="renderWorkReport()"><option value="">Все швеи</option></select></label>
+          <label>Модель<select id="work-model" onchange="renderWorkReport()"><option value="">Все модели</option></select></label>
+          <label>Дата кроя с<input id="work-cut-from" type="date" onchange="renderWorkReport()"></label>
+          <label>Дата кроя по<input id="work-cut-to" type="date" onchange="renderWorkReport()"></label>
+          <label>Приёмка по операции<select id="work-kind" onchange="renderWorkReport()"><option value="all">Все незавершённые</option><option value="none">Приёмки ещё нет</option><option value="partial">Принято частично</option></select></label>
+          <label>Дней с выдачи, от<input id="work-days" type="number" min="0" step="1" inputmode="numeric" placeholder="Любое количество" oninput="renderWorkReport()"></label>
+          <label>Поиск<input id="work-search" type="search" placeholder="Паспорт, пачка, операция, цвет…" oninput="renderWorkReport()"></label>
+        </div>
+        <button class="action-btn btn-primary" onclick="loadWorkReport()">🔄 Обновить остатки в работе</button>
+        <p class="payroll-note">Осталось по операции = выдано − принято годных − учтённый брак, минимум 0. Брак показан отдельно. В отчёте только выданная работа с остатком; все фильтры применяются к сводке и списку.</p>
+      </div>
+      <div id="work-result" aria-live="polite"></div>
+      <button id="work-export" class="action-btn btn-secondary" onclick="exportWorkReport()" hidden>📥 Скачать остатки для Excel</button>
+      <div class="loading" id="work-report-loading"><div class="spinner"></div><div>Загрузка всех выданных операций...</div></div>
+    </div>
+
     <!-- ===== HISTORICAL PAYROLL RECONCILIATION ===== -->
     <div class="screen" id="screen-payroll-recovery">
       <div class="card">
@@ -1155,9 +1180,10 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-<script src="supabase/pilot-api.js?v=payroll-recovery-1-20261123"></script>
+<script src="supabase/pilot-api.js?v=work-report-1-20261123"></script>
 <script src="payroll-statement.js?v=payroll-statement-2"></script>
 <script src="payroll-recovery.js?v=payroll-recovery-3-20261123"></script>
+<script src="work-report.js?v=work-report-1-20261123"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1421,6 +1447,7 @@ function submitAcceptWithOps() {
         btns += menuBtn('', '🧮', 'Расчёт стоимости', 'Цена заказчику и плановая прибыль', 'openCostCalculator()');
       }
       if (role === 'admin' || role === 'master' || role === 'accountant') {
+        if(typeof API.getWorkInProgress==='function')btns += menuBtn('', '🧵', 'В работе — не принято', 'Остатки по швеям, моделям, паспортам и операциям', 'openWorkReport()');
         btns += menuBtn('btn-dashboard', '🧵', 'Отчёт по швее', 'Выдано, принято, брак и оплата за период', 'openSewerReport()');
       }
       if (role === 'admin') {
@@ -1439,7 +1466,7 @@ function submitAcceptWithOps() {
 
     // ===== NAVIGATION =====
     function showScreen(id, title, sub) {
-      document.body.classList.toggle('payroll-wide',id==='payroll');
+      document.body.classList.toggle('payroll-wide',id==='payroll'||id==='work-report');
       document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('active');});
       document.getElementById('screen-' + id).classList.add('active');
       document.getElementById('headerTitle').textContent = title || 'Швейное производство';
