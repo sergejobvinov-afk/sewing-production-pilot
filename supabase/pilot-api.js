@@ -86,7 +86,7 @@
     return refreshPromise;
   }
 
-  function request(path, options, allowRefresh) {
+  function request(path, options, allowRefresh, includeRange) {
     if (!config) return Promise.reject(new Error('Supabase не настроен'));
     var headers = Object.assign({
       apikey: config.anonKey,
@@ -105,28 +105,47 @@
             var message = (body && (body.msg || body.message || body.error_description)) || ('HTTP ' + response.status);
             var authExpired = response.status === 401 || /jwt.*expired|token.*expired|invalid jwt/i.test(message);
             if (allowRefresh !== false && authExpired && session && session.refresh_token && path.indexOf('/auth/v1/token') !== 0) {
-              return refreshSession().then(function () { return request(path, options, false); });
+              return refreshSession().then(function () { return request(path, options, false, includeRange); });
             }
             throw new Error(message);
           }
           console.info('[Supabase pilot] ' + path.split('?')[0] + ': ' + Math.round(performance.now() - started) + ' ms');
-          return body;
+          return includeRange ? { rows: body, range: response.headers && response.headers.get('Content-Range') } : body;
         });
       });
   }
 
-  function table(name, query) {
+  // Only unique primary-key lookups may bypass pagination.
+  function tableOne(name, query) {
+    var params = new URLSearchParams(query);
+    if (params.get('limit') !== '1' || !/^eq\..+/.test(params.get('id') || '') || params.has('offset')) {
+      return Promise.reject(new Error('Список необходимо загружать полностью'));
+    }
     return request('/rest/v1/' + name + '?' + query, { method: 'GET' });
   }
 
-  // Stable ordering is supplied by the caller. Keep pages below the API row cap.
+  // Every list uses a unique tie-breaker. The first count also handles a server
+  // row cap smaller than pageSize; never mistake a shortened page for all rows.
   function tableAll(name, query) {
-    var rows = [], pageSize = 500;
+    var params = new URLSearchParams(query), rows = [], pageSize = 500, total = null;
+    if (params.has('limit') || params.has('offset') || !/(^|,)id\.(asc|desc)(,|$)/.test(params.get('order') || '')) {
+      return Promise.reject(new Error('Не настроена полная загрузка списка'));
+    }
     function next() {
-      return table(name, query + '&limit=' + pageSize + '&offset=' + rows.length).then(function (page) {
+      var options = { method: 'GET' };
+      if (!rows.length) options.headers = { Prefer: 'count=exact' };
+      return request('/rest/v1/' + name + '?' + query + '&limit=' + pageSize + '&offset=' + rows.length, options, true, true).then(function (result) {
+        var page = result.rows, range = /^(\d+)-(\d+)\/(\d+|\*)$/.exec(result.range || '');
         if (!Array.isArray(page)) throw new Error('Не удалось полностью загрузить данные');
+        if (range && (Number(range[1]) !== rows.length || Number(range[2]) - Number(range[1]) + 1 !== page.length)) {
+          throw new Error('Получена неполная страница данных. Обновите список');
+        }
+        if (range && range[3] !== '*') total = Number(range[3]);
+        if (!page.length && total !== null && rows.length < total) throw new Error('Не удалось полностью загрузить данные');
         rows = rows.concat(page);
-        return page.length === pageSize ? next() : rows;
+        // If a proxy hides Content-Range, read to an empty page instead of
+        // guessing the server cap from the number of returned rows.
+        return total !== null ? (rows.length < total ? next() : rows) : (page.length ? next() : rows);
       });
     }
     return next();
@@ -222,7 +241,7 @@
   }
 
   function operationsForPack(packId) {
-    return table('pack_operations', 'select=operation_name,sewer_name,issued_qty,accepted_qty,defect_qty,paid_qty,paid_at,client_paid_qty,client_paid_at,issued_at,accepted_at,sewer_price&pack_id=eq.' + encodeURIComponent(packId) + '&order=id.asc')
+    return tableAll('pack_operations', 'select=operation_name,sewer_name,issued_qty,accepted_qty,defect_qty,paid_qty,paid_at,client_paid_qty,client_paid_at,issued_at,accepted_at,sewer_price&pack_id=eq.' + encodeURIComponent(packId) + '&order=id.asc')
       .then(function (rows) {
         return rows.map(function (op) {
           return {
@@ -245,7 +264,7 @@
   }
 
   function getPack(id) {
-    return table('packs', 'select=*&id=eq.' + encodeURIComponent(id) + '&limit=1')
+    return tableOne('packs', 'select=*&id=eq.' + encodeURIComponent(id) + '&limit=1')
       .then(function (rows) { return rows[0] || null; });
   }
 
@@ -256,7 +275,7 @@
   function profileForSession(authSession) {
     session = authSession;
     sessionStorage.setItem('supabasePilotSession', JSON.stringify(authSession));
-    return table('profiles', 'select=display_name,role,active&id=eq.' + encodeURIComponent(authSession.user ? authSession.user.id : authSession.user_id) + '&limit=1')
+    return tableOne('profiles', 'select=display_name,role,active&id=eq.' + encodeURIComponent(authSession.user ? authSession.user.id : authSession.user_id) + '&limit=1')
       .then(function (profiles) {
         var profile = profiles[0];
         if (!profile || !profile.active) throw new Error('Профиль пользователя не активирован');
@@ -378,10 +397,10 @@
     },
 
     getAllPacks: function () {
-      return table('packs', 'select=*&order=cut_date.desc,id.desc').then(function (packs) {
+      return tableAll('packs', 'select=*&order=cut_date.desc,id.desc').then(function (packs) {
         return Promise.all([
-          table('operation_catalog', 'select=model,operation_name&active=eq.true&order=sequence_no.asc,id.asc'),
-          table('pack_operations', 'select=pack_id,issued_qty,accepted_qty,defect_qty&issued_qty=gt.0')
+          tableAll('operation_catalog', 'select=model,operation_name&active=eq.true&order=sequence_no.asc,id.asc'),
+          tableAll('pack_operations', 'select=pack_id,issued_qty,accepted_qty,defect_qty&issued_qty=gt.0&order=id.asc')
         ]).then(function (result) {
             var catalog=result[0],operationRows=result[1];
             var byModel = {};
@@ -415,7 +434,7 @@
     getPassportData: function (packId) {
       return getPack(packId).then(function (pack) {
         if (!pack) return { success: false, message: 'Пачка не найдена' };
-        return table('operation_catalog', 'select=operation_name&active=eq.true&model=eq.' + encodeURIComponent(pack.model) + '&order=sequence_no.asc,id.asc')
+        return tableAll('operation_catalog', 'select=operation_name&active=eq.true&model=eq.' + encodeURIComponent(pack.model) + '&order=sequence_no.asc,id.asc')
           .then(function (operations) {
             return Object.assign({ success: true }, packDto(pack, operations));
           });
@@ -423,13 +442,13 @@
     },
 
     getModelList: function () {
-      return table('operation_catalog', 'select=model&active=eq.true&order=model.asc').then(function (rows) {
+      return tableAll('operation_catalog', 'select=model&active=eq.true&order=model.asc,id.asc').then(function (rows) {
         return Array.from(new Set(rows.map(function (row) { return row.model; })));
       });
     },
 
     getModelOperations: function (model) {
-      return table('operation_catalog', 'select=operation_name,sewer_price&active=eq.true&model=eq.' + encodeURIComponent(model) + '&order=sequence_no.asc,id.asc')
+      return tableAll('operation_catalog', 'select=operation_name,sewer_price&active=eq.true&model=eq.' + encodeURIComponent(model) + '&order=sequence_no.asc,id.asc')
         .then(function (rows) {
           return rows.map(function (row) { return { name: row.operation_name, price: Number(row.sewer_price), priceSewer: Number(row.sewer_price) }; });
         });
@@ -536,13 +555,12 @@
         p_date_from: dateFrom,
         p_date_to: dateTo,
         p_date_kind: dateKind || 'accepted'
-      }).then(unwrapRpc).catch(function (rpcError) {
+      }).then(unwrapRpc).catch(function () {
         var field = dateKind === 'issued' ? 'issued_at' : dateKind === 'paid' ? 'paid_at' : 'accepted_at';
         var query='select=pack_id,operation_name,issued_qty,accepted_qty,defect_qty,paid_qty,issued_at,accepted_at,paid_at,sewer_name'+
-          '&sewer_name=eq.'+encodeURIComponent(sewerName)+'&'+field+'=gte.'+dateFrom+'T00:00:00Z&'+field+'=lte.'+dateTo+'T23:59:59.999Z&order='+field+'.asc';
-        return Promise.all([table('pack_operations',query),table('packs','select=id,model,passport_no,status&status=neq.annulled')])
-          .then(function(result){return sewerReportFromRows(sewerName,dateFrom,dateTo,dateKind||'accepted',result[0],result[1]);})
-          .catch(function(){throw rpcError;});
+          '&sewer_name=eq.'+encodeURIComponent(sewerName)+'&'+field+'=gte.'+dateFrom+'T00:00:00Z&'+field+'=lte.'+dateTo+'T23:59:59.999Z&order='+field+'.asc,id.asc';
+        return Promise.all([tableAll('pack_operations',query),tableAll('packs','select=id,model,passport_no,status&status=neq.annulled&order=id.asc')])
+          .then(function(result){return sewerReportFromRows(sewerName,dateFrom,dateTo,dateKind||'accepted',result[0],result[1]);});
       });
     },
     setOperationsPayment: function (items, kind, paid) {
