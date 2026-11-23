@@ -1,20 +1,23 @@
 (function (root, factory) {
   'use strict';
-  var api=factory(root);
+  var api=factory(root,typeof module==='object'&&module.exports?require('./payroll-statement.js'):root.PayrollStatement);
   if(typeof module==='object'&&module.exports)module.exports=api;
   else{root.WorkReport=api;root.openWorkReport=api.open;root.loadWorkReport=api.load;root.renderWorkReport=api.render;root.exportWorkReport=api.exportExcel;}
-})(typeof window==='object'?window:globalThis,function(root){
+})(typeof window==='object'?window:globalThis,function(root,payroll){
   'use strict';
   function qty(value){if(value===null||value===''||!Number.isSafeInteger(Number(value))||Number(value)<0)throw new Error('Некорректное количество в остатках');return Number(value);}
   function safe(value){if(!Number.isSafeInteger(value))throw new Error('Количество превышает допустимое значение');return value;}
+  function costSafe(value){if(!Number.isSafeInteger(value))throw new Error('Сумма превышает допустимое значение');return value;}
+  function money(value){return(value/100).toLocaleString('ru-RU',{maximumFractionDigits:2});}
   function html(value){return String(value==null?'':value).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   function day(value){var parsed=new Date(value);return value&&Number.isFinite(parsed.getTime())?new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(parsed):'';}
   function validDate(value){if(!/^\d{4}-\d{2}-\d{2}$/.test(value))return false;var d=new Date(value+'T12:00:00Z');return Number.isFinite(d.getTime())&&d.toISOString().slice(0,10)===value;}
   function date(value){return value?value.slice(8,10)+'.'+value.slice(5,7)+'.'+value.slice(0,4):'Не указана';}
   function compare(a,b){return String(a).localeCompare(String(b),'ru',{numeric:true});}
-  function summarize(rows){
+  function summarize(rows,includeFinance){
     var packs=new Map(),totals={packCount:0,packRemaining:0,operationCount:rows.length,operationRemaining:0,withoutAcceptance:0,partial:0,defects:0,warningCount:0};
-    rows.forEach(function(row){packs.set(row.packId,Math.max(packs.get(row.packId)||0,row.remainingQty));totals.operationRemaining=safe(totals.operationRemaining+row.remainingQty);totals.defects=safe(totals.defects+row.defectQty);if(row.acceptedQty+row.defectQty===0)totals.withoutAcceptance++;else totals.partial++;if(row.warnings.length)totals.warningCount++;});
+    if(includeFinance){totals.remainingCostCents=0;totals.zeroPriceOperations=0;}
+    rows.forEach(function(row){packs.set(row.packId,Math.max(packs.get(row.packId)||0,row.remainingQty));totals.operationRemaining=safe(totals.operationRemaining+row.remainingQty);totals.defects=safe(totals.defects+row.defectQty);if(row.acceptedQty+row.defectQty===0)totals.withoutAcceptance++;else totals.partial++;if(row.warnings.length)totals.warningCount++;if(includeFinance){totals.remainingCostCents=costSafe(totals.remainingCostCents+row.remainingCostCents);if(row.priceCents===0)totals.zeroPriceOperations++;}});
     totals.packCount=packs.size;packs.forEach(function(q){totals.packRemaining=safe(totals.packRemaining+q);});return totals;
   }
   function build(operations,options){
@@ -44,24 +47,33 @@
       if(['issued','partially_accepted'].indexOf(op.packStatus)<0)warnings.push('Статус паспорта не соответствует незавершённой операции');
       if(issued!==packQty)warnings.push('Выданное количество отличается от количества в пачке');
       if(!issuedDay)warnings.push('Не указана дата выдачи');else if(issuedDay>today)warnings.push('Дата выдачи находится в будущем');
-      rows.push(Object.assign({},op,{id:id,sewerName:sewer,cutDate:cut,issuedQty:issued,acceptedQty:accepted,defectQty:defects,remainingQty:remaining,issuedDay:issuedDay,daysInWork:age,warnings:warnings}));
+      var row=Object.assign({},op,{id:id,sewerName:sewer,cutDate:cut,issuedQty:issued,acceptedQty:accepted,defectQty:defects,remainingQty:remaining,issuedDay:issuedDay,daysInWork:age,warnings:warnings});
+      delete row.sewerPrice;delete row.priceCents;delete row.remainingCostCents;
+      if(options.includeFinance===true){
+        try{row.priceCents=payroll.cents(op.sewerPrice);}catch(error){throw new Error('Проверьте расценку: '+op.packId+' / '+op.operationName);}
+        row.remainingCostCents=costSafe(remaining*row.priceCents);
+      }
+      rows.push(row);
     });
     rows.sort(function(a,b){return(a.issuedDay&&b.issuedDay?compare(a.issuedDay,b.issuedDay):a.issuedDay?-1:b.issuedDay?1:0)||compare(a.sewerName,b.sewerName)||compare(a.packId,b.packId)||compare(a.operationName,b.operationName);});
     var groups=new Map();rows.forEach(function(row){if(!groups.has(row.sewerName))groups.set(row.sewerName,[]);groups.get(row.sewerName).push(row);});
-    return{rows:rows,totals:summarize(rows),groups:Array.from(groups,function(entry){return Object.assign({name:entry[0]},summarize(entry[1]));}).sort(function(a,b){return compare(a.name,b.name);}),generatedAt:now,options:Object.assign({},options)};
+    var financeAvailable=options.includeFinance===true;
+    return{rows:rows,financeAvailable:financeAvailable,totals:summarize(rows,financeAvailable),groups:Array.from(groups,function(entry){return Object.assign({name:entry[0]},summarize(entry[1],financeAvailable));}).sort(function(a,b){return compare(a.name,b.name);}),generatedAt:now,options:Object.assign({},options)};
   }
   function csv(report){
     var o=report.options,rows=[['В работе — не принято','Сформировано',report.generatedAt],['Швея',o.sewer||'Все','Модель',o.model||'Все','Крой с',o.cutFrom||'Все даты','по',o.cutTo||'Все даты'],
       ['Приёмка по операции',o.kind==='partial'?'Принято частично':o.kind==='none'?'Приёмки ещё нет':'Все незавершённые','Дней с выдачи от',o.minDays||0,'Поиск',o.search||'—'],
       ['Пачек',report.totals.packCount,'Остаток по пачкам',report.totals.packRemaining,'Незавершённых операций',report.totals.operationCount,'Остаток по операциям',report.totals.operationRemaining],
       ['Остаток по пачке — максимум остатка по её показанным операциям. Пачка может повторяться у разных швей; суммы по швеям не равны количеству уникальных пачек.'],[],
-      ['Швея','Модель','Дата кроя','Пачка ID','Паспорт','Размер','Цвет','Операция','Дата выдачи (Москва)','Дней с выдачи','Выдано','Принято годных','Брак','Осталось по операции','Примечание']];
-    report.rows.forEach(function(r){rows.push([r.sewerName,r.model,r.cutDate,r.packId,r.passport||'',r.size||'',r.color||'',r.operationName,r.issuedDay,r.daysInWork,r.issuedQty,r.acceptedQty,r.defectQty,r.remainingQty,r.warnings.join('; ')]);});
-    return rows.map(function(row){return row.map(function(value){if(typeof value==='number')return String(value);var s=String(value==null?'':value).replace(/[\r\n\t]/g,' ');if(/^[=+\-@]/.test(s.trimStart()))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';}).join(';');}).join('\r\n');
+      ['Швея','Модель','Дата кроя','Пачка ID','Паспорт','Размер','Цвет','Операция','Дата выдачи (Москва)','Дней с выдачи','Выдано','Принято годных','Брак','Осталось по операции'].concat(report.financeAvailable?['Расценка швеи, ₽','Стоимость остатка, ₽']:[]).concat(['Примечание'])];
+    if(report.financeAvailable)rows.splice(rows.length-1,0,['Стоимость непринятой работы, ₽',report.totals.remainingCostCents/100],['Остаток по операции × расценка, зафиксированная при выдаче. Начисление зарплаты — после приёмки ОТК. Нулевых расценок: '+report.totals.zeroPriceOperations]);
+    report.rows.forEach(function(r){rows.push([r.sewerName,r.model,r.cutDate,r.packId,r.passport||'',r.size||'',r.color||'',r.operationName,r.issuedDay,r.daysInWork,r.issuedQty,r.acceptedQty,r.defectQty,r.remainingQty].concat(report.financeAvailable?[r.priceCents/100,r.remainingCostCents/100]:[]).concat([r.warnings.join('; ')]));});
+    return rows.map(function(row){return row.map(function(value){if(typeof value==='number')return String(value).replace('.',',');var s=String(value==null?'':value).replace(/[\r\n\t]/g,' ');if(/^[=+\-@]/.test(s.trimStart()))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';}).join(';');}).join('\r\n');
   }
-  var state={operations:null,generatedAt:'',report:null,request:0};
+  var state={operations:null,generatedAt:'',report:null,request:0,financeAvailable:false};
   function el(id){return root.document.getElementById('work-'+id);}
   function allowed(){return root.currentUser&&['admin','master','accountant'].indexOf(root.currentUser.role)>=0;}
+  function financeAllowed(){return root.currentUser&&['admin','accountant'].indexOf(root.currentUser.role)>=0;}
   function open(){
     if(!allowed())return root.showToast('Недостаточно прав для просмотра работы',true);
     root.showScreen('work-report','🧵 В работе — не принято','Выданные операции и остатки');
@@ -69,11 +81,11 @@
   }
   function load(){
     if(!allowed())return;
-    var request=++state.request;state.operations=null;state.report=null;el('result').innerHTML='';el('export').hidden=true;root.showLoading('work-report',true);
+    var request=++state.request;state.operations=null;state.report=null;state.financeAvailable=false;el('result').innerHTML='';el('export').hidden=true;root.showLoading('work-report',true);
     return root.API.getWorkInProgress().then(function(data){
       if(request!==state.request||!allowed())return;
       if(!data||!data.success)throw new Error(data&&data.message||'Не удалось загрузить остатки');
-      var pending=build(data.operations,{now:data.generatedAt});state.operations=data.operations;state.generatedAt=data.generatedAt;
+      var pending=build(data.operations,{now:data.generatedAt});state.operations=data.operations;state.generatedAt=data.generatedAt;state.financeAvailable=financeAllowed()&&data.financeAvailable===true;
       ['sewer','model'].forEach(function(key){
         var value=el(key).value;el(key).innerHTML='<option value="">'+(key==='sewer'?'Все швеи':'Все модели')+'</option>';
         Array.from(new Set(pending.rows.map(function(r){return key==='sewer'?r.sewerName:r.model;}))).sort(compare).forEach(function(name){var opt=root.document.createElement('option');opt.value=name;opt.textContent=name;el(key).appendChild(opt);});el(key).value=value;if(!el(key).value)el(key).value='';
@@ -84,24 +96,26 @@
   function render(){
     state.report=null;el('export').hidden=true;if(!state.operations||!allowed())return;
     try{
-      var r=build(state.operations,{now:state.generatedAt,sewer:el('sewer').value,model:el('model').value,cutFrom:el('cut-from').value,cutTo:el('cut-to').value,kind:el('kind').value,minDays:el('days').value,search:el('search').value}),t=r.totals;state.report=r;
+      var r=build(state.operations,{now:state.generatedAt,includeFinance:state.financeAvailable&&financeAllowed(),sewer:el('sewer').value,model:el('model').value,cutFrom:el('cut-from').value,cutTo:el('cut-to').value,kind:el('kind').value,minDays:el('days').value,search:el('search').value}),t=r.totals;state.report=r;
       var h='<div class="card"><h3>Остатки выданной работы</h3><div class="dash-grid">'+
-        '<div><strong>'+t.packCount+'</strong><br>Пачек с остатком</div><div><strong>'+t.packRemaining+'</strong><br>Остаток по пачкам, шт.</div><div><strong>'+t.operationCount+'</strong><br>Незавершённых операций</div><div><strong>'+t.operationRemaining+'</strong><br>Остаток по операциям, шт.</div></div>'+
+        '<div><strong>'+t.packCount+'</strong><br>Пачек с остатком</div><div><strong>'+t.packRemaining+'</strong><br>Остаток по пачкам, шт.</div><div><strong>'+t.operationCount+'</strong><br>Незавершённых операций</div><div><strong>'+t.operationRemaining+'</strong><br>Остаток по операциям, шт.</div>'+(r.financeAvailable?'<div style="grid-column:1/-1;"><strong>'+money(t.remainingCostCents)+' ₽</strong><br>Стоимость непринятой работы</div>':'')+'</div>'+
         '<p>Без приёмки по операции: '+t.withoutAcceptance+' · Частично принято: '+t.partial+'</p><p class="payroll-note">Для каждой пачки берётся максимальный остаток по показанным операциям: несколько операций не удваивают число изделий. Это остаток работы по пачкам, а не сумма операций. Сформировано: '+html(new Date(r.generatedAt).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'}))+' (Москва).</p></div>';
+      if(r.financeAvailable)h+='<div class="card"><p class="payroll-note">Стоимость = остаток по каждой операции × расценка швеи, зафиксированная при выдаче. Суммы складываются по операциям. Зарплата начисляется по принятому ОТК количеству.</p>'+(t.zeroPriceOperations?'<p style="color:#b45309;">⚠️ Нулевая расценка у '+t.zeroPriceOperations+' операций. В расчёте их стоимость равна 0 ₽; проверьте расценки.</p>':'')+'</div>';
       if(t.warningCount)h+='<div class="card" role="status">⚠️ Требуют проверки данные '+t.warningCount+' операций. Причина указана в расшифровке; записи не изменены.</div>';
       if(!r.rows.length)h+='<div class="card">По выбранным фильтрам непринятой работы нет.</div>';
       else{
-        h+='<div class="card payroll-scroll"><table class="payroll-table"><caption>У кого находится работа</caption><thead><tr><th>Швея</th><th>Пачек</th><th>Остаток по пачкам</th><th>Операций</th><th>Остаток по операциям</th></tr></thead><tbody>';
-        r.groups.forEach(function(g){h+='<tr><th scope="row">'+html(g.name)+'</th><td>'+g.packCount+'</td><td>'+g.packRemaining+'</td><td>'+g.operationCount+'</td><td>'+g.operationRemaining+'</td></tr>';});
+        h+='<div class="card payroll-scroll"><table class="payroll-table"><caption>У кого находится работа</caption><thead><tr><th>Швея</th><th>Пачек</th><th>Остаток по пачкам</th><th>Операций</th><th>Остаток по операциям</th>'+(r.financeAvailable?'<th>Стоимость остатка, ₽</th>':'')+'</tr></thead><tbody>';
+        r.groups.forEach(function(g){h+='<tr><th scope="row">'+html(g.name)+'</th><td>'+g.packCount+'</td><td>'+g.packRemaining+'</td><td>'+g.operationCount+'</td><td>'+g.operationRemaining+'</td>'+(r.financeAvailable?'<td>'+money(g.remainingCostCents)+'</td>':'')+'</tr>';});
         h+='</tbody></table><p class="payroll-note">Если операции одной пачки выполняют разные швеи, пачка показана у каждой. Итог выше считает каждую пачку один раз.</p></div>';
         h+='<details class="card"><summary>Паспорта и операции ('+r.rows.length+') — раскрыть</summary><div class="work-op-grid">';
-        r.rows.forEach(function(x){h+='<article class="work-op-card"><strong>'+html(x.model)+' · '+html(x.size)+' · '+html(x.color)+'</strong><p>'+html(x.packId)+' · Паспорт '+html(x.passport||'не указан')+'</p><p>Швея: <strong>'+html(x.sewerName)+'</strong><br>Операция: '+html(x.operationName)+'</p><p>Выдано: '+x.issuedQty+' · Принято: '+x.acceptedQty+'<br>Брак: '+x.defectQty+' · <strong>Осталось: '+x.remainingQty+'</strong></p><p class="payroll-note">Крой: '+date(x.cutDate)+'<br>Выдача: '+date(x.issuedDay)+' · Дней с выдачи: '+(x.daysInWork===null?'неизвестно':x.daysInWork)+'</p>'+(x.warnings.length?'<p class="payroll-note" style="color:#b45309;">⚠️ '+html(x.warnings.join('. '))+'</p>':'')+'</article>';});
+        r.rows.forEach(function(x){h+='<article class="work-op-card"><strong>'+html(x.model)+' · '+html(x.size)+' · '+html(x.color)+'</strong><p>'+html(x.packId)+' · Паспорт '+html(x.passport||'не указан')+'</p><p>Швея: <strong>'+html(x.sewerName)+'</strong><br>Операция: '+html(x.operationName)+'</p><p>Выдано: '+x.issuedQty+' · Принято: '+x.acceptedQty+'<br>Брак: '+x.defectQty+' · <strong>Осталось: '+x.remainingQty+'</strong></p>'+(r.financeAvailable?'<p>Расценка: '+money(x.priceCents)+' ₽/шт.<br><strong>Стоимость остатка: '+money(x.remainingCostCents)+' ₽</strong></p>':'')+'<p class="payroll-note">Крой: '+date(x.cutDate)+'<br>Выдача: '+date(x.issuedDay)+' · Дней с выдачи: '+(x.daysInWork===null?'неизвестно':x.daysInWork)+'</p>'+(x.warnings.length?'<p class="payroll-note" style="color:#b45309;">⚠️ '+html(x.warnings.join('. '))+'</p>':'')+'</article>';});
         h+='</div></details>';
       }el('result').innerHTML=h;el('export').hidden=!r.rows.length;
     }catch(error){el('result').innerHTML='<div class="card" role="alert">'+html(error.message)+'</div>';}
   }
   function exportExcel(){
     if(!allowed()||!state.report)return;
+    if(state.report.financeAvailable&&!financeAllowed()){render();if(!state.report)return;}
     var blob=new Blob(['\uFEFF'+csv(state.report)],{type:'text/csv;charset=utf-8;'}),url=root.URL.createObjectURL(blob),a=root.document.createElement('a');a.href=url;a.download='В_работе_не_принято_'+day(state.generatedAt)+'.csv';root.document.body.appendChild(a);a.click();a.remove();root.setTimeout(function(){root.URL.revokeObjectURL(url);},1000);
   }
   return{build:build,csv:csv,open:open,load:load,render:render,exportExcel:exportExcel};

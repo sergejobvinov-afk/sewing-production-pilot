@@ -466,14 +466,18 @@
       });
     },
     getWorkInProgress: function () {
-      return tableAll('pack_operations', 'select=id,pack_id,operation_name,sewer_name,issued_qty,accepted_qty,defect_qty,issued_at,accepted_at,packs!inner(model,passport_no,cut_date,size,color,quantity,status)&issued_qty=gt.0&packs.status=neq.annulled&order=issued_at.asc,id.asc')
+      var financeAvailable=!!(window.currentUser&&['admin','accountant'].indexOf(window.currentUser.role)>=0);
+      var select='id,pack_id,operation_name,sewer_name,issued_qty,accepted_qty,defect_qty,issued_at,accepted_at'+(financeAvailable?',sewer_price':'')+',packs!inner(model,passport_no,cut_date,size,color,quantity,status)';
+      return tableAll('pack_operations', 'select='+select+'&issued_qty=gt.0&packs.status=neq.annulled&order=issued_at.asc,id.asc')
         .then(function (rows) {
-          return { success: true, generatedAt: new Date().toISOString(), operations: rows.map(function (row) {
+          return { success: true, financeAvailable: financeAvailable, generatedAt: new Date().toISOString(), operations: rows.map(function (row) {
             if (!row.packs) throw new Error('Не удалось сопоставить операцию с паспортом');
-            return { id: String(row.id), packId: row.pack_id, operationName: row.operation_name, sewerName: row.sewer_name || 'Не назначена',
+            var operation={ id: String(row.id), packId: row.pack_id, operationName: row.operation_name, sewerName: row.sewer_name || 'Не назначена',
               issuedQty: row.issued_qty, acceptedQty: row.accepted_qty, defectQty: row.defect_qty, issuedAt: row.issued_at, acceptedAt: row.accepted_at,
               model: row.packs.model, passport: row.packs.passport_no, cutDate: row.packs.cut_date, size: row.packs.size,
               color: row.packs.color, packQty: row.packs.quantity, packStatus: row.packs.status };
+            if(financeAvailable)operation.sewerPrice=row.sewer_price;
+            return operation;
           }) };
         });
     },
