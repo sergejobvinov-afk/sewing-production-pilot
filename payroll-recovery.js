@@ -154,9 +154,19 @@
   function record() {
     if (!allowed() || state.busy || !state.report || !state.data || el('date').value!==state.report.paymentDate) return;
     var selected=selection(state.report,state.selected);if (!selected.items.length) return;
-    var prompt='Подтверждаете, что зарплата '+date(state.report.paymentDate)+' уже выдана?\n'+selected.groups.map(function (g) { return g.name+': '+money(g.amountCents)+' ₽'; }).join('\n')+'\nВсего '+money(selected.amountCents)+' ₽, '+selected.items.length+' операций.\nВнести выбранные суммы в учёт датой выплаты?';
-    if (!root.confirm(prompt)) return;
-    var paymentDate=state.report.paymentDate,key=JSON.stringify([paymentDate,selected.items]);
+    var existing=root.document.getElementById('recovery-confirm');if (existing) return;
+    var paymentDate=state.report.paymentDate,dialog=root.document.createElement('dialog');dialog.id='recovery-confirm';dialog.setAttribute('aria-label','Подтверждение прошлой выплаты');
+    dialog.innerHTML='<style>#recovery-confirm{width:min(620px,94vw);max-width:94vw;max-height:85vh;margin:auto;padding:20px;border:0;border-radius:14px;overflow:auto;background:white;color:#222}#recovery-confirm::backdrop{background:rgba(0,0,0,.5)}#recovery-confirm .confirm-actions{position:sticky;bottom:-20px;background:white;padding:12px 0}</style>'+
+      '<h3>Внести выплату '+date(paymentDate)+'?</h3><p>Подтвердите, что эти суммы зарплаты уже выданы:</p>'+selected.groups.map(function(g){return '<p><strong>'+html(g.name)+'</strong>: '+money(g.amountCents)+' ₽</p>';}).join('')+
+      '<p><strong>Всего: '+money(selected.amountCents)+' ₽ · Операций: '+selected.items.length+'</strong></p><p class="payroll-note">Будут добавлены только выбранные отметки оплаты. Работа после даты выплаты останется к оплате. Деньги не переводятся.</p>'+
+      '<div class="confirm-actions"><button class="action-btn btn-secondary" type="button" data-cancel>Отмена, сверить ещё раз</button><button class="action-btn btn-success" type="button" data-confirm>Да, зарплата выдана — внести в учёт</button></div>';
+    dialog.querySelector('[data-cancel]').addEventListener('click',function(){dialog.close();});
+    dialog.querySelector('[data-confirm]').addEventListener('click',function(){dialog.close();apply(paymentDate,selected);});
+    dialog.addEventListener('close',function(){dialog.remove();});root.document.body.appendChild(dialog);dialog.showModal();
+  }
+  function apply(paymentDate,selected) {
+    if (!allowed() || state.busy) return;
+    var key=JSON.stringify([paymentDate,selected.items]);
     if (!state.pending || state.pending.key!==key) state.pending={ key:key,id:root.crypto.randomUUID() };
     setBusy(true);root.showLoading('payroll-recovery',true);
     return root.API.recordPayrollRecovery(paymentDate,selected.items,state.pending.id).then(function (result) {
