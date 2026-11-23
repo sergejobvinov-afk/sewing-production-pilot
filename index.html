@@ -864,6 +864,7 @@ var QRGen=(function(){
       <div class="card" style="padding:12px;">
         <h3 style="margin-top:0;">💳 Массовая оплата операций</h3>
         <button id="payments-payroll" class="action-btn btn-primary" onclick="openPayrollStatement(document.getElementById('payments-sewer').value)">🧾 Ведомость выплаты по швее</button>
+        <button class="action-btn btn-secondary" onclick="openPayrollRecovery()">🗓️ Сверить прошлую выплату</button>
         <input id="payments-search" type="text" placeholder="Паспорт, пачка, операция или швея" oninput="renderPaymentsList()">
         <select id="payments-model" onchange="renderPaymentsList()" style="margin-top:8px;"><option value="">Все модели</option></select>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
@@ -892,6 +893,7 @@ var QRGen=(function(){
     <div class="screen" id="screen-payroll">
       <div class="card">
         <h3>🧾 Ведомость выплаты</h3>
+        <button class="action-btn btn-secondary" onclick="openPayrollRecovery()">🗓️ Зарплату выдали, но не отметили? Сверить выплату</button>
         <div class="payroll-filters">
           <label>Швея<select id="payroll-sewer" onchange="clearPayrollStatement()"><option value="">— Выберите швею —</option></select></label>
           <label>Дата ведомости<input id="payroll-date" type="date" onchange="renderPayrollStatement()"></label>
@@ -911,6 +913,32 @@ var QRGen=(function(){
       </div>
       <div id="payroll-result" aria-live="polite"></div>
       <div class="loading" id="payroll-loading"><div class="spinner"></div><div>Формирование ведомости...</div></div>
+    </div>
+
+    <!-- ===== HISTORICAL PAYROLL RECONCILIATION ===== -->
+    <div class="screen" id="screen-payroll-recovery">
+      <div class="card">
+        <h3>🗓️ Сверка прошлой выплаты</h3>
+        <p class="payroll-note">Выберите день, когда выдали зарплату за всю принятую к этому дню работу. Приёмки учитываются до конца дня по московскому времени, включая частичные. Уже отмеченная оплата повторно не добавляется.</p>
+        <div class="payroll-filters">
+          <label>Дата состоявшейся выплаты<input type="date" id="recovery-date" onchange="clearPayrollRecovery()"></label>
+          <label>Швея<select id="recovery-sewer" onchange="filterPayrollRecovery()"><option value="">Все швеи</option></select></label>
+          <label>Модель<select id="recovery-model" onchange="filterPayrollRecovery()"><option value="">Все модели</option></select></label>
+          <label>Показать<select id="recovery-mode" onchange="filterPayrollRecovery()"><option value="due">Требуется отметить оплату</option><option value="all">Всё принятое к дате выплаты</option></select></label>
+        </div>
+        <button class="action-btn btn-primary" onclick="loadPayrollRecovery()">🔎 Восстановить состав выплаты</button>
+        <p class="payroll-note">Это сверка текущего учёта с прошлой выплатой. Уже учтённые оплаты засчитываются в самую раннюю работу. При неполном журнале спорные операции требуют отдельной проверки.</p>
+      </div>
+      <div id="recovery-notice" aria-live="polite"></div>
+      <div id="recovery-result" aria-live="polite"></div>
+      <div id="recovery-actions" class="card" hidden>
+        <label style="display:flex;align-items:center;gap:8px;"><input id="recovery-select-all" type="checkbox" onchange="selectAllPayrollRecovery(this.checked)" style="width:24px;height:24px;"> Выбрать все доступные операции по фильтру</label>
+        <p id="recovery-selection"></p>
+        <button class="action-btn btn-success" id="recovery-record" onclick="recordPayrollRecovery()">✅ Внести сверенную выплату в учёт</button>
+        <button class="action-btn btn-secondary" onclick="exportPayrollRecovery()">📥 Скачать сверку для Excel</button>
+        <p class="payroll-note">Запись выполняется после отдельного подтверждения. Это отметка уже выданной зарплаты, без перевода денег. Приёмки после выбранной даты остаются к оплате.</p>
+      </div>
+      <div class="loading" id="payroll-recovery-loading"><div class="spinner"></div><div>Проверка истории приёмок...</div></div>
     </div>
 
     <!-- ===== SEWER PERIOD REPORT ===== -->
@@ -1126,8 +1154,9 @@ var QRGen=(function(){
   <!-- API wrapper for Google Apps Script backend -->
   <script src="api.js"></script>
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
-<script src="supabase/pilot-api.js?v=all-lists-complete-1-20261123"></script>
+<script src="supabase/pilot-api.js?v=payroll-recovery-1-20261123"></script>
 <script src="payroll-statement.js?v=payroll-statement-2"></script>
+<script src="payroll-recovery.js?v=payroll-recovery-1-20261123"></script>
   
   <!-- Camera & HTTPS check -->
   <script>
@@ -1387,6 +1416,7 @@ function submitAcceptWithOps() {
         btns += menuBtn('btn-dashboard', '📊', 'Дашборд', 'Финансы, производство, швеи', 'openDashboard()');
         btns += menuBtn('btn-status', '💳', 'Оплата операций', 'Массовая оплата швеям и от заказчика', 'openPayments()');
         if(typeof API.getPayrollStatementOperations==='function')btns += menuBtn('', '🧾', 'Ведомость выплаты', 'Сверка: модель, дата кроя, операция и расценка', 'openPayrollStatement()');
+        if(typeof API.getPayrollRecovery==='function')btns += menuBtn('', '🗓️', 'Прошлая выплата', 'Сверить зарплату, которую выдали, но не отметили', 'openPayrollRecovery()');
         btns += menuBtn('', '🧮', 'Расчёт стоимости', 'Цена заказчику и плановая прибыль', 'openCostCalculator()');
       }
       if (role === 'admin' || role === 'master' || role === 'accountant') {

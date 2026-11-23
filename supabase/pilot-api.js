@@ -517,6 +517,12 @@
     getPaymentOperations: function () {
       return rpc('get_payment_operations', {}).then(unwrapRpc);
     },
+    getPayrollRecovery: function (paymentDate) {
+      return rpc('get_payroll_recovery', { p_payment_date: paymentDate }).then(unwrapRpc);
+    },
+    recordPayrollRecovery: function (paymentDate, items, requestId) {
+      return rpc('record_payroll_recovery', { p_payment_date: paymentDate, p_items: items, p_request_id: requestId }).then(unwrapRpc);
+    },
     getPayrollStatementOperations: function (sewerName) {
       if (!sewerName) return Promise.reject(new Error('Выберите швею'));
       // The finance RPC enforces permissions and supplies the same full financial
