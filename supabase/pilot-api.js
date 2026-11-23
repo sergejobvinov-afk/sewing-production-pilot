@@ -124,7 +124,7 @@
     var rows = [], pageSize = 500;
     function next() {
       return table(name, query + '&limit=' + pageSize + '&offset=' + rows.length).then(function (page) {
-        if (!Array.isArray(page)) throw new Error('Не удалось загрузить полные данные ведомости');
+        if (!Array.isArray(page)) throw new Error('Не удалось полностью загрузить данные');
         rows = rows.concat(page);
         return page.length === pageSize ? next() : rows;
       });
@@ -437,8 +437,8 @@
 
     getSewerList: function () {
       return Promise.all([
-        table('profiles', 'select=display_name,active&role=eq.sewer&order=display_name.asc'),
-        table('pack_operations', 'select=sewer_name&sewer_name=not.is.null&order=sewer_name.asc')
+        tableAll('profiles', 'select=display_name,active&role=eq.sewer&order=display_name.asc,id.asc'),
+        tableAll('pack_operations', 'select=sewer_name&sewer_name=not.is.null&order=sewer_name.asc,id.asc')
       ]).then(function (result) {
         var profiles=result[0],history=result[1],inactive=new Set(),names=[];
         profiles.forEach(function(row){if(row.active)names.push(row.display_name);else inactive.add(row.display_name);});
