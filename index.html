@@ -930,6 +930,7 @@ var QRGen=(function(){
         <p class="payroll-note">Это сверка текущего учёта с прошлой выплатой. Уже учтённые оплаты засчитываются в самую раннюю работу. При неполном журнале спорные операции требуют отдельной проверки.</p>
       </div>
       <div id="recovery-notice" aria-live="polite"></div>
+      <div id="recovery-history" aria-live="polite"></div>
       <div id="recovery-result" aria-live="polite"></div>
       <div id="recovery-actions" class="card" hidden>
         <label style="display:flex;align-items:center;gap:8px;"><input id="recovery-select-all" type="checkbox" onchange="selectAllPayrollRecovery(this.checked)" style="width:24px;height:24px;"> Выбрать все доступные операции по фильтру</label>
@@ -1156,7 +1157,7 @@ var QRGen=(function(){
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
 <script src="supabase/pilot-api.js?v=payroll-recovery-1-20261123"></script>
 <script src="payroll-statement.js?v=payroll-statement-2"></script>
-<script src="payroll-recovery.js?v=payroll-recovery-2-20261123"></script>
+<script src="payroll-recovery.js?v=payroll-recovery-3-20261123"></script>
   
   <!-- Camera & HTTPS check -->
   <script>

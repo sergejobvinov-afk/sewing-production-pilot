@@ -11,6 +11,7 @@
     root.selectAllPayrollRecovery = api.selectAll;
     root.recordPayrollRecovery = api.record;
     root.exportPayrollRecovery = api.exportExcel;
+    root.exportRecordedPayrollRecovery = api.exportRecorded;
   }
 })(typeof window === 'object' ? window : globalThis, function (root, payroll) {
   'use strict';
@@ -83,13 +84,36 @@
     }).join(';'); }).join('\r\n');
   }
 
-  var state = { data:null,report:null,selected:new Set(),request:0,busy:false,pending:null };
+  function receipts(data,options) {
+    options=options||{};var entries=[],groups=new Map(),seen=new Set(),amount=0;
+    (data.payments||[]).forEach(function(batch){
+      if(batch.paymentDate!==data.paymentDate||!Array.isArray(batch.entries)||batch.entries.length!==Number(batch.count))throw new Error('Неполная сохранённая ведомость');
+      var batchAmount=0;
+      batch.entries.forEach(function(entry){
+        if(!entry.eventId||seen.has(entry.eventId))throw new Error('Повторная строка сохранённой выплаты');seen.add(entry.eventId);
+        var price=payroll.cents(entry.price),qty=quantity(entry.qty),lineAmount=safe(price*qty);
+        if(lineAmount!==payroll.cents(entry.amount))throw new Error('Не сходится сумма сохранённой выплаты');batchAmount=safe(batchAmount+lineAmount);
+        if(options.sewer&&entry.sewerName!==options.sewer||options.model&&entry.model!==options.model)return;
+        var row=Object.assign({},entry,{paymentDate:batch.paymentDate,recordedAt:batch.recordedAt,batchId:batch.batchId,priceCents:price,amountCents:lineAmount});
+        entries.push(row);amount=safe(amount+lineAmount);groups.set(entry.sewerName,safe((groups.get(entry.sewerName)||0)+lineAmount));
+      });
+      if(batchAmount!==payroll.cents(batch.amount))throw new Error('Не сходится итог сохранённой выплаты');
+    });
+    return {entries:entries,amountCents:amount,groups:Array.from(groups,function(x){return{name:x[0],amountCents:x[1]};})};
+  }
+  function receiptCsv(receipt) {
+    var rows=[['Сохранённая выплата','Дата внесения в учёт','Швея','Модель','Дата кроя','Пачка ID','Паспорт','Операция','Оплачено, шт.','Расценка, ₽','Сумма, ₽','Номер записи']];
+    receipt.entries.forEach(function(r){rows.push([r.paymentDate,r.recordedAt,r.sewerName,r.model,r.cutDate,r.packId,r.passport,r.operationName,r.qty,r.priceCents/100,r.amountCents/100,r.batchId]);});
+    rows.push(['ИТОГО','','','','','','','','','',receipt.amountCents/100]);
+    return rows.map(function(row){return row.map(function(value){if(typeof value==='number')return String(value).replace('.',',');var s=String(value==null?'':value).replace(/[\r\n\t]/g,' ');if(/^[=+\-@]/.test(s.trimStart()))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';}).join(';');}).join('\r\n');
+  }
+  var state = { data:null,report:null,receipt:null,selected:new Set(),request:0,busy:false,pending:null };
   function el(id) { return root.document.getElementById('recovery-'+id); }
   function allowed() { return root.currentUser && ['admin','accountant'].indexOf(root.currentUser.role)>=0; }
   function clear() {
     if (state.busy) return;
     state.request++;state.data=null;state.report=null;state.selected.clear();state.pending=null;
-    el('result').innerHTML='';el('actions').hidden=true;el('notice').innerHTML='';root.showLoading('payroll-recovery',false);
+    state.receipt=null;el('history').innerHTML='';el('result').innerHTML='';el('actions').hidden=true;el('notice').innerHTML='';root.showLoading('payroll-recovery',false);
   }
   function open() {
     if (!allowed() || typeof root.API.getPayrollRecovery !== 'function') { root.showToast('Недостаточно прав для сверки выплаты',true); return; }
@@ -122,6 +146,13 @@
     if (!state.data) return;
     try {
       var report=build(state.data,{ sewer:el('sewer').value,model:el('model').value,mode:el('mode').value });state.report=report;
+      state.receipt=receipts(state.data,{sewer:el('sewer').value,model:el('model').value});
+      var saved=state.receipt,history='';
+      if(saved.entries.length){
+        history='<div class="card"><h3>✅ Сохранённая выплата '+date(report.paymentDate)+'</h3><p><strong>В учёте: '+money(saved.amountCents)+' ₽ · Операций: '+saved.entries.length+'</strong></p>'+
+          saved.groups.map(function(g){return '<p>'+html(g.name)+' — <strong>'+money(g.amountCents)+' ₽</strong></p>';}).join('')+
+          '<button class="action-btn btn-secondary" onclick="exportRecordedPayrollRecovery()">📥 Скачать состав сохранённой выплаты</button><p class="payroll-note">Эти суммы уже внесены в учёт. Выгрузка содержит каждый паспорт, операцию, оплаченное количество и расценку. Дата выплаты и дата внесения записи показаны отдельно.</p></div>';
+      }el('history').innerHTML=history;
       var h='<div class="card"><h3>Выплата '+date(report.paymentDate)+'</h3><p><strong>Не отмечено в учёте: '+money(report.totals.amountCents)+' ₽</strong></p><p>Операций к восстановлению: '+report.totals.operationCount+'. Требуют отдельной проверки: '+report.totals.reviewCount+'.</p><p class="payroll-note">Сумма по выбранным фильтрам. Количество показано по операциям, а не по готовым изделиям. Сверьте суммы с фактически выданной зарплатой.</p></div>';
       report.groups.forEach(function (g) {
         h+='<div class="card"><strong>'+html(g.name)+' — '+money(g.amountCents)+' ₽</strong><p>Принято к дате: '+g.beforeQty+' · Уже учтено: '+g.coveredQty+' · Добавить: '+g.addQty+'</p><p>Операций к отметке: '+g.operationCount+(g.reviewCount?' · Проверить: '+g.reviewCount:'')+'</p></div>';
@@ -181,5 +212,10 @@
     var blob=new Blob(['\uFEFF'+csv(state.report)],{type:'text/csv;charset=utf-8;'}),url=root.URL.createObjectURL(blob),a=root.document.createElement('a');
     a.href=url;a.download='Сверка_выплаты_'+state.report.paymentDate+'.csv';root.document.body.appendChild(a);a.click();a.remove();root.setTimeout(function () { root.URL.revokeObjectURL(url); },1000);
   }
-  return { build:build,selection:selection,csv:csv,open:open,load:load,clear:clear,filter:filter,selectAll:selectAll,record:record,exportExcel:exportExcel };
+  function exportRecorded(){
+    if(!allowed()||!state.receipt||!state.receipt.entries.length)return;
+    var blob=new Blob(['\uFEFF'+receiptCsv(state.receipt)],{type:'text/csv;charset=utf-8;'}),url=root.URL.createObjectURL(blob),a=root.document.createElement('a');
+    a.href=url;a.download='Сохранённая_выплата_'+state.data.paymentDate+'.csv';root.document.body.appendChild(a);a.click();a.remove();root.setTimeout(function(){root.URL.revokeObjectURL(url);},1000);
+  }
+  return { build:build,selection:selection,csv:csv,receipts:receipts,receiptCsv:receiptCsv,open:open,load:load,clear:clear,filter:filter,selectAll:selectAll,record:record,exportExcel:exportExcel,exportRecorded:exportRecorded };
 });
