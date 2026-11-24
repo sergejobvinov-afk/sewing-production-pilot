@@ -107,13 +107,22 @@
     rows.push(['ИТОГО','','','','','','','','','',receipt.amountCents/100]);
     return rows.map(function(row){return row.map(function(value){if(typeof value==='number')return String(value).replace('.',',');var s=String(value==null?'':value).replace(/[\r\n\t]/g,' ');if(/^[=+\-@]/.test(s.trimStart()))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';}).join(';');}).join('\r\n');
   }
+  function filterChoices(data) {
+    var rows=data.operations.filter(function(row){return row.needsReview||row.acceptedBefore>0;});
+    (data.payments||[]).forEach(function(batch){rows=rows.concat(batch.entries||[]);});
+    function names(field){return Array.from(new Set(rows.map(function(row){return row[field];}).filter(function(value){return typeof value==='string'&&value.trim();}))).sort(function(a,b){return a.localeCompare(b,'ru');});}
+    return {sewer:names('sewerName'),model:names('model')};
+  }
   var state = { data:null,report:null,receipt:null,selected:new Set(),request:0,busy:false,pending:null };
   function el(id) { return root.document.getElementById('recovery-'+id); }
   function allowed() { return root.currentUser && ['admin','accountant'].indexOf(root.currentUser.role)>=0; }
+  function filterStatus(loading,message) {
+    el('sewer').disabled=loading;el('model').disabled=loading;el('filter-status').textContent=message||'';
+  }
   function clear() {
     if (state.busy) return;
     state.request++;state.data=null;state.report=null;state.selected.clear();state.pending=null;
-    state.receipt=null;el('history').innerHTML='';el('result').innerHTML='';el('actions').hidden=true;el('notice').innerHTML='';root.showLoading('payroll-recovery',false);
+    state.receipt=null;el('history').innerHTML='';el('result').innerHTML='';el('actions').hidden=true;el('notice').innerHTML='';filterStatus(false,'');root.showLoading('payroll-recovery',false);
   }
   function open() {
     if (!allowed() || typeof root.API.getPayrollRecovery !== 'function') { root.showToast('Недостаточно прав для сверки выплаты',true); return; }
@@ -122,24 +131,25 @@
     var requested = new URLSearchParams(root.location.search).get('payrollDate');
     el('date').value = requested && validDate(requested) && requested<=today() ? requested : today();
     el('sewer').innerHTML='<option value="">Все швеи</option>';el('model').innerHTML='<option value="">Все модели</option>';el('mode').value='due';
+    return load();
   }
   function load() {
     if (!allowed() || state.busy) return;
     var paymentDate=el('date').value;
     clear();
-    if (!validDate(paymentDate) || paymentDate>today()) { root.showToast('Укажите дату состоявшейся выплаты',true); return; }
-    var request=++state.request;root.showLoading('payroll-recovery',true);
+    if (!validDate(paymentDate) || paymentDate>today()) { filterStatus(false,'Укажите корректную дату, чтобы загрузить список швей.');root.showToast('Укажите дату состоявшейся выплаты',true); return; }
+    var request=++state.request;filterStatus(true,'Загружаю швей и модели за выбранную дату...');root.showLoading('payroll-recovery',true);
     return root.API.getPayrollRecovery(paymentDate).then(function (data) {
-      if (request!==state.request || paymentDate!==el('date').value) return;
-      build(data);state.data=data;
+      if (request!==state.request || paymentDate!==el('date').value || !allowed()) return;
+      build(data);receipts(data);var choices=filterChoices(data);state.data=data;
       ['sewer','model'].forEach(function (key) {
         var value=el(key).value;el(key).innerHTML='<option value="">'+(key==='sewer'?'Все швеи':'Все модели')+'</option>';
-        Array.from(new Set(data.operations.filter(function (r) { return r.needsReview || r.acceptedBefore>0; }).map(function (r) { return key==='sewer'?r.sewerName:r.model; }))).sort(function (a,b) { return a.localeCompare(b,'ru'); }).forEach(function (name) {
+        choices[key].forEach(function (name) {
           var option=root.document.createElement('option');option.value=name;option.textContent=name;el(key).appendChild(option);
         });el(key).value=value;if (!el(key).value) el(key).value='';
-      });render();
-    }).catch(function (error) { if (request===state.request) el('result').innerHTML='<div class="card" role="alert">'+html(error.message)+'</div>'; })
-      .finally(function () { if (request===state.request) root.showLoading('payroll-recovery',false); });
+      });filterStatus(false,choices.sewer.length?'Выберите швею — суммы и сохранённая ведомость отфильтруются автоматически.':'За эту дату нет принятой работы или сохранённых выплат.');render();
+    }).catch(function (error) { if (request===state.request) {filterStatus(false,'Список швей не загружен. Нажмите «Обновить данные выплаты».');el('result').innerHTML='<div class="card" role="alert">'+html(error.message)+'</div>';} })
+      .finally(function () { if (request===state.request) {el('sewer').disabled=false;el('model').disabled=false;root.showLoading('payroll-recovery',false);} });
   }
   function filter() { if (!state.busy) { state.selected.clear();render(); } }
   function render() {
@@ -217,5 +227,5 @@
     var blob=new Blob(['\uFEFF'+receiptCsv(state.receipt)],{type:'text/csv;charset=utf-8;'}),url=root.URL.createObjectURL(blob),a=root.document.createElement('a');
     a.href=url;a.download='Сохранённая_выплата_'+state.data.paymentDate+'.csv';root.document.body.appendChild(a);a.click();a.remove();root.setTimeout(function(){root.URL.revokeObjectURL(url);},1000);
   }
-  return { build:build,selection:selection,csv:csv,receipts:receipts,receiptCsv:receiptCsv,open:open,load:load,clear:clear,filter:filter,selectAll:selectAll,record:record,exportExcel:exportExcel,exportRecorded:exportRecorded };
+  return { build:build,selection:selection,csv:csv,receipts:receipts,receiptCsv:receiptCsv,filterChoices:filterChoices,open:open,load:load,clear:clear,filter:filter,selectAll:selectAll,record:record,exportExcel:exportExcel,exportRecorded:exportRecorded };
 });
