@@ -85,7 +85,7 @@
   }
 
   function receipts(data,options) {
-    options=options||{};var entries=[],groups=new Map(),seen=new Set(),amount=0;
+    options=options||{};var entries=[],groups=new Map(),models=new Map(),seen=new Set(),amount=0;
     (data.payments||[]).forEach(function(batch){
       if(batch.paymentDate!==data.paymentDate||!Array.isArray(batch.entries)||batch.entries.length!==Number(batch.count))throw new Error('Неполная сохранённая ведомость');
       var batchAmount=0;
@@ -94,12 +94,35 @@
         var price=payroll.cents(entry.price),qty=quantity(entry.qty),lineAmount=safe(price*qty);
         if(lineAmount!==payroll.cents(entry.amount))throw new Error('Не сходится сумма сохранённой выплаты');batchAmount=safe(batchAmount+lineAmount);
         if(options.sewer&&entry.sewerName!==options.sewer||options.model&&entry.model!==options.model)return;
-        var row=Object.assign({},entry,{paymentDate:batch.paymentDate,recordedAt:batch.recordedAt,batchId:batch.batchId,priceCents:price,amountCents:lineAmount});
+        var row=Object.assign({},entry,{qty:qty,paymentDate:batch.paymentDate,recordedAt:batch.recordedAt,batchId:batch.batchId,priceCents:price,amountCents:lineAmount});
         entries.push(row);amount=safe(amount+lineAmount);groups.set(entry.sewerName,safe((groups.get(entry.sewerName)||0)+lineAmount));
+        var key=JSON.stringify([entry.sewerName,entry.model]),model=models.get(key);
+        if(!model){model={sewerName:entry.sewerName,model:entry.model,qty:0,amountCents:0,packs:new Set(),calculations:new Map()};models.set(key,model);}
+        model.qty=safe(model.qty+qty);model.amountCents=safe(model.amountCents+lineAmount);model.packs.add(entry.packId);
+        var calculationKey=JSON.stringify([entry.cutDate||'',entry.operationName,price]),calculation=model.calculations.get(calculationKey);
+        if(!calculation){calculation={cutDate:entry.cutDate||'',operationName:entry.operationName,priceCents:price,qty:0,amountCents:0};model.calculations.set(calculationKey,calculation);}
+        calculation.qty=safe(calculation.qty+qty);calculation.amountCents=safe(calculation.amountCents+lineAmount);
       });
       if(batchAmount!==payroll.cents(batch.amount))throw new Error('Не сходится итог сохранённой выплаты');
     });
-    return {entries:entries,amountCents:amount,groups:Array.from(groups,function(x){return{name:x[0],amountCents:x[1]};})};
+    var summaries=Array.from(models.values(),function(model){
+      return {sewerName:model.sewerName,model:model.model,qty:model.qty,amountCents:model.amountCents,passportCount:model.packs.size,
+        calculations:Array.from(model.calculations.values()).sort(function(a,b){return a.cutDate.localeCompare(b.cutDate)||a.operationName.localeCompare(b.operationName,'ru')||a.priceCents-b.priceCents;})};
+    }).sort(function(a,b){return a.sewerName.localeCompare(b.sewerName,'ru')||a.model.localeCompare(b.model,'ru');});
+    return {entries:entries,amountCents:amount,models:summaries,groups:Array.from(groups,function(x){return{name:x[0],amountCents:x[1]};}).sort(function(a,b){return a.name.localeCompare(b.name,'ru');})};
+  }
+  function receiptSummaryHtml(receipt,expand) {
+    return receipt.groups.map(function(group){
+      var models=receipt.models.filter(function(model){return model.sewerName===group.name;});
+      var h='<section><h4>'+html(group.name)+' — '+money(group.amountCents)+' ₽</h4><div class="payroll-scroll"><table class="payroll-table"><caption>Сводная по моделям · '+html(group.name)+'</caption><thead><tr><th scope="col">Модель</th><th scope="col">Паспортов</th><th scope="col">Оплачено по операциям, шт.</th><th scope="col">Выплачено, ₽</th></tr></thead><tbody>';
+      models.forEach(function(model){h+='<tr><th scope="row">'+html(model.model)+'</th><td>'+model.passportCount+'</td><td>'+model.qty+'</td><td><strong>'+money(model.amountCents)+'</strong></td></tr>';});
+      h+='</tbody><tfoot><tr><th scope="row" colspan="3">Итого · '+html(group.name)+'</th><td><strong>'+money(group.amountCents)+'</strong></td></tr></tfoot></table></div>';
+      h+='<details'+(expand?' open':'')+'><summary>Расчёт по моделям, дате кроя и операциям · '+html(group.name)+'</summary><div class="payroll-scroll"><table class="payroll-table"><caption>Оплаченное количество × сохранённая расценка</caption><thead><tr><th scope="col">Модель</th><th scope="col">Дата кроя</th><th scope="col">Операция</th><th scope="col">Оплачено, шт.</th><th scope="col">Расценка, ₽</th><th scope="col">Расчёт, ₽</th><th scope="col">Выплачено, ₽</th></tr></thead><tbody>';
+      models.forEach(function(model){model.calculations.forEach(function(row){
+        h+='<tr><th scope="row">'+html(model.model)+'</th><td>'+html(row.cutDate?date(row.cutDate):'Не указана')+'</td><td>'+html(row.operationName)+'</td><td>'+row.qty+'</td><td>'+money(row.priceCents)+'</td><td>'+row.qty+' × '+money(row.priceCents)+'</td><td>'+money(row.amountCents)+'</td></tr>';
+      });h+='<tr><th scope="row" colspan="6">Итого · '+html(model.model)+'</th><td><strong>'+money(model.amountCents)+'</strong></td></tr>';});
+      return h+'</tbody><tfoot><tr><th scope="row" colspan="6">Всего выплачено · '+html(group.name)+'</th><td><strong>'+money(group.amountCents)+'</strong></td></tr></tfoot></table></div></details></section>';
+    }).join('');
   }
   function receiptCsv(receipt) {
     var rows=[['Сохранённая выплата','Дата внесения в учёт','Швея','Модель','Дата кроя','Пачка ID','Паспорт','Операция','Оплачено, шт.','Расценка, ₽','Сумма, ₽','Номер записи']];
@@ -159,8 +182,9 @@
       state.receipt=receipts(state.data,{sewer:el('sewer').value,model:el('model').value});
       var saved=state.receipt,history='';
       if(saved.entries.length){
-        history='<div class="card"><h3>✅ Сохранённая выплата '+date(report.paymentDate)+'</h3><p><strong>В учёте: '+money(saved.amountCents)+' ₽ · Операций: '+saved.entries.length+'</strong></p>'+
-          saved.groups.map(function(g){return '<p>'+html(g.name)+' — <strong>'+money(g.amountCents)+' ₽</strong></p>';}).join('')+
+        history='<div class="card"><h3>✅ Сохранённая выплата '+date(report.paymentDate)+'</h3><p><strong>Выплачено по ведомости: '+money(saved.amountCents)+' ₽ · Строк операций: '+saved.entries.length+'</strong></p>'+
+          '<p class="payroll-note">Суммы по выбранным швее и модели. Количество суммируется по операциям: одно изделие может учитываться в нескольких операциях. Расчёт использует количество и расценки, сохранённые при отметке выплаты.</p>'+
+          receiptSummaryHtml(saved,!!el('sewer').value)+
           '<button class="action-btn btn-secondary" onclick="exportRecordedPayrollRecovery()">📥 Скачать состав сохранённой выплаты</button><p class="payroll-note">Эти суммы уже внесены в учёт. Выгрузка содержит каждый паспорт, операцию, оплаченное количество и расценку. Дата выплаты и дата внесения записи показаны отдельно.</p></div>';
       }el('history').innerHTML=history;
       var h='<div class="card"><h3>Выплата '+date(report.paymentDate)+'</h3><p><strong>Не отмечено в учёте: '+money(report.totals.amountCents)+' ₽</strong></p><p>Операций к восстановлению: '+report.totals.operationCount+'. Требуют отдельной проверки: '+report.totals.reviewCount+'.</p><p class="payroll-note">Сумма по выбранным фильтрам. Количество показано по операциям, а не по готовым изделиям. Сверьте суммы с фактически выданной зарплатой.</p></div>';

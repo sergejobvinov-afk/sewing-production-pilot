@@ -1183,7 +1183,7 @@ var QRGen=(function(){
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
 <script src="supabase/pilot-api.js?v=work-cost-1-20261123"></script>
 <script src="payroll-statement.js?v=payroll-statement-2"></script>
-<script src="payroll-recovery.js?v=recovery-filter-fix-1-20261124"></script>
+<script src="payroll-recovery.js?v=receipt-model-summary-1-20261124"></script>
 <script src="work-report.js?v=work-cost-1-20261123"></script>
   
   <!-- Camera & HTTPS check -->
@@ -1467,7 +1467,7 @@ function submitAcceptWithOps() {
 
     // ===== NAVIGATION =====
     function showScreen(id, title, sub) {
-      document.body.classList.toggle('payroll-wide',id==='payroll'||id==='work-report');
+      document.body.classList.toggle('payroll-wide',id==='payroll'||id==='work-report'||id==='payroll-recovery');
       document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('active');});
       document.getElementById('screen-' + id).classList.add('active');
       document.getElementById('headerTitle').textContent = title || 'Швейное производство';
