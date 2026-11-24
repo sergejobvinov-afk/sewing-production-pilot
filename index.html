@@ -400,6 +400,15 @@ var QRGen=(function(){
     .payroll-table thead,.payroll-table tfoot { background:#f1f3ff; }
     .payroll-table summary { text-align:left;cursor:pointer;padding:8px 0;color:#465bb5; }
     .payroll-table details table { min-width:500px;margin:10px 0; }
+    .recovery-models { table-layout:fixed; }
+    .recovery-models thead th:nth-child(1) { width:36%; }
+    .recovery-models thead th:nth-child(2) { width:16%; }
+    .recovery-models thead th:nth-child(3) { width:22%; }
+    .recovery-models thead th:nth-child(4) { width:26%; }
+    .payroll-table.recovery-models th,.payroll-table.recovery-models td { padding:9px 4px;overflow-wrap:anywhere; }
+    .payroll-table.recovery-models td:nth-child(2) { white-space:normal; }
+    .recovery-scroll-note { display:none; }
+    @media(max-width:640px) { .recovery-scroll-note { display:block; } }
     #payroll-exports { display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px; }
     #payroll-exports[hidden] { display:none; }
     .screen { display: none; }
@@ -1183,7 +1192,7 @@ var QRGen=(function(){
   <!-- Optional read-only Supabase pilot. Activated only with ?backend=supabase. -->
 <script src="supabase/pilot-api.js?v=work-cost-1-20261123"></script>
 <script src="payroll-statement.js?v=payroll-statement-2"></script>
-<script src="payroll-recovery.js?v=receipt-model-summary-1-20261124"></script>
+<script src="payroll-recovery.js?v=receipt-model-summary-2-20261124"></script>
 <script src="work-report.js?v=work-cost-1-20261123"></script>
   
   <!-- Camera & HTTPS check -->
