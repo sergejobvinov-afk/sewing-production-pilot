@@ -534,7 +534,15 @@
       return rpc('get_payment_operations', {}).then(unwrapRpc);
     },
     getPayrollRecovery: function (paymentDate) {
-      return rpc('get_payroll_recovery', { p_payment_date: paymentDate }).then(unwrapRpc);
+      return rpc('get_payroll_recovery', { p_payment_date: paymentDate }).then(unwrapRpc).then(function(data){
+        if(!data||!data.success||!Array.isArray(data.operations))throw new Error('Не удалось загрузить сверку выплаты');
+        // Read all cumulative payment transitions, including earlier payments and
+        // cancellations. Taking paid_qty from today's row would count old pay again.
+        return tableAll('pack_events','select=id,pack_id,event_type,payload,created_at&event_type=in.'+
+          encodeURIComponent('("Оплата швее","Оплата операции","Отмена оплаты операции")')+'&order=id.asc').then(function(events){
+          data.paymentEvents=events;return data;
+        });
+      });
     },
     recordPayrollRecovery: function (paymentDate, items, requestId) {
       return rpc('record_payroll_recovery', { p_payment_date: paymentDate, p_items: items, p_request_id: requestId }).then(unwrapRpc);

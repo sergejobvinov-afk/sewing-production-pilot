@@ -1,6 +1,7 @@
 (function (root, factory) {
   'use strict';
-  var api = factory(root, typeof module === 'object' && module.exports ? require('./payroll-statement.js') : root.PayrollStatement);
+  var api = factory(root, typeof module === 'object' && module.exports ? require('./payroll-statement.js') : root.PayrollStatement,
+    typeof module === 'object' && module.exports ? require('./payroll-history.js') : root.PayrollHistory);
   if (typeof module === 'object' && module.exports) module.exports = api;
   else {
     root.PayrollRecovery = api;
@@ -13,13 +14,14 @@
     root.exportPayrollRecovery = api.exportExcel;
     root.exportRecordedPayrollRecovery = api.exportRecorded;
   }
-})(typeof window === 'object' ? window : globalThis, function (root, payroll) {
+})(typeof window === 'object' ? window : globalThis, function (root, payroll, history) {
   'use strict';
   function quantity(value) {
     if (value === null || value === '' || !Number.isSafeInteger(Number(value)) || Number(value) < 0) throw new Error('Некорректное количество в сверке');
     return Number(value);
   }
   function safe(value) { if (!Number.isSafeInteger(value)) throw new Error('Сумма превышает допустимое значение'); return value; }
+  function signedCents(value) { var s=String(value);return s[0]==='-'?-payroll.cents(s.slice(1)):payroll.cents(value); }
   function html(value) { return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) { return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]; }); }
   function money(value) { return (value / 100).toLocaleString('ru-RU', { maximumFractionDigits: 2 }); }
   function date(value) { return value.slice(8,10) + '.' + value.slice(5,7) + '.' + value.slice(0,4); }
@@ -85,31 +87,37 @@
   }
 
   function receipts(data,options) {
-    options=options||{};var entries=[],groups=new Map(),models=new Map(),seen=new Set(),amount=0;
-    (data.payments||[]).forEach(function(batch){
+    options=options||{};var entries=[],groups=new Map(),models=new Map(),seen=new Set(),amount=0,paidAmount=0,reversedAmount=0;
+    var journal=history.build(data);
+    (data.payments||[]).concat(journal.payments).forEach(function(batch){
       if(batch.paymentDate!==data.paymentDate||!Array.isArray(batch.entries)||batch.entries.length!==Number(batch.count))throw new Error('Неполная сохранённая ведомость');
       var batchAmount=0;
       batch.entries.forEach(function(entry){
         if(!entry.eventId||seen.has(entry.eventId))throw new Error('Повторная строка сохранённой выплаты');seen.add(entry.eventId);
-        var price=payroll.cents(entry.price),qty=quantity(entry.qty),lineAmount=safe(price*qty);
-        if(lineAmount!==payroll.cents(entry.amount))throw new Error('Не сходится сумма сохранённой выплаты');batchAmount=safe(batchAmount+lineAmount);
+        var direction=batch.source==='payment_history'&&entry.direction===-1?-1:1;
+        var price=payroll.cents(entry.price),qty=direction*quantity(entry.qty),lineAmount=safe(price*qty);
+        if(lineAmount!==direction*payroll.cents(entry.amount))throw new Error('Не сходится сумма сохранённой выплаты');batchAmount=safe(batchAmount+lineAmount);
         if(options.sewer&&entry.sewerName!==options.sewer||options.model&&entry.model!==options.model)return;
-        var row=Object.assign({},entry,{qty:qty,paymentDate:batch.paymentDate,recordedAt:batch.recordedAt,batchId:batch.batchId,priceCents:price,amountCents:lineAmount});
+        var row=Object.assign({},entry,{qty:qty,paymentDate:batch.paymentDate,recordedAt:entry.recordedAt||batch.recordedAt,batchId:batch.batchId,priceCents:price,amountCents:lineAmount});
         entries.push(row);amount=safe(amount+lineAmount);groups.set(entry.sewerName,safe((groups.get(entry.sewerName)||0)+lineAmount));
+        if(direction<0)reversedAmount=safe(reversedAmount-lineAmount);else paidAmount=safe(paidAmount+lineAmount);
         var key=JSON.stringify([entry.sewerName,entry.model]),model=models.get(key);
         if(!model){model={sewerName:entry.sewerName,model:entry.model,qty:0,amountCents:0,packs:new Set(),calculations:new Map()};models.set(key,model);}
         model.qty=safe(model.qty+qty);model.amountCents=safe(model.amountCents+lineAmount);model.packs.add(entry.packId);
-        var calculationKey=JSON.stringify([entry.cutDate||'',entry.operationName,price]),calculation=model.calculations.get(calculationKey);
+        var calculationKey=JSON.stringify([entry.cutDate||'',entry.operationName,price,direction]),calculation=model.calculations.get(calculationKey);
         if(!calculation){calculation={cutDate:entry.cutDate||'',operationName:entry.operationName,priceCents:price,qty:0,amountCents:0};model.calculations.set(calculationKey,calculation);}
+        if(direction<0)calculation.reversal=true;
         calculation.qty=safe(calculation.qty+qty);calculation.amountCents=safe(calculation.amountCents+lineAmount);
       });
-      if(batchAmount!==payroll.cents(batch.amount))throw new Error('Не сходится итог сохранённой выплаты');
+      if(batchAmount!==signedCents(batch.amount))throw new Error('Не сходится итог сохранённой выплаты');
     });
     var summaries=Array.from(models.values(),function(model){
       return {sewerName:model.sewerName,model:model.model,qty:model.qty,amountCents:model.amountCents,passportCount:model.packs.size,
         calculations:Array.from(model.calculations.values()).sort(function(a,b){return a.cutDate.localeCompare(b.cutDate)||a.operationName.localeCompare(b.operationName,'ru')||a.priceCents-b.priceCents;})};
     }).sort(function(a,b){return a.sewerName.localeCompare(b.sewerName,'ru')||a.model.localeCompare(b.model,'ru');});
-    return {entries:entries,amountCents:amount,models:summaries,groups:Array.from(groups,function(x){return{name:x[0],amountCents:x[1]};}).sort(function(a,b){return a.name.localeCompare(b.name,'ru');})};
+    return {entries:entries,amountCents:amount,paidAmountCents:paidAmount,reversedAmountCents:reversedAmount,
+      issues:journal.issues.filter(function(issue){return(!options.sewer||issue.sewerName===options.sewer)&&(!options.model||issue.model===options.model);}),
+      models:summaries,groups:Array.from(groups,function(x){return{name:x[0],amountCents:x[1]};}).sort(function(a,b){return a.name.localeCompare(b.name,'ru');})};
   }
   function receiptSummaryHtml(receipt,expand) {
     return receipt.groups.map(function(group){
@@ -119,7 +127,7 @@
       h+='</tbody><tfoot><tr><th scope="row" colspan="3">Итого · '+html(group.name)+'</th><td><strong>'+money(group.amountCents)+'</strong></td></tr></tfoot></table></div>';
       h+='<details'+(expand?' open':'')+'><summary>Расчёт по моделям, дате кроя и операциям · '+html(group.name)+'</summary><p class="payroll-note recovery-scroll-note">Таблицу расчёта можно прокрутить вправо →</p><div class="payroll-scroll"><table class="payroll-table"><caption>Оплаченное количество × сохранённая расценка</caption><thead><tr><th scope="col">Модель</th><th scope="col">Дата кроя</th><th scope="col">Операция</th><th scope="col">Оплачено, шт.</th><th scope="col">Расценка, ₽</th><th scope="col">Расчёт, ₽</th><th scope="col">Выплачено, ₽</th></tr></thead><tbody>';
       models.forEach(function(model){model.calculations.forEach(function(row){
-        h+='<tr><th scope="row">'+html(model.model)+'</th><td>'+html(row.cutDate?date(row.cutDate):'Не указана')+'</td><td>'+html(row.operationName)+'</td><td>'+row.qty+'</td><td>'+money(row.priceCents)+'</td><td>'+row.qty+' × '+money(row.priceCents)+'</td><td>'+money(row.amountCents)+'</td></tr>';
+        h+='<tr><th scope="row">'+html(model.model)+'</th><td>'+html(row.cutDate?date(row.cutDate):'Не указана')+'</td><td>'+html(row.operationName)+(row.reversal?'<br><strong>Отмена отметки оплаты</strong>':'')+'</td><td>'+row.qty+'</td><td>'+money(row.priceCents)+'</td><td>'+row.qty+' × '+money(row.priceCents)+'</td><td>'+money(row.amountCents)+'</td></tr>';
       });h+='<tr><th scope="row" colspan="6">Итого · '+html(model.model)+'</th><td><strong>'+money(model.amountCents)+'</strong></td></tr>';});
       return h+'</tbody><tfoot><tr><th scope="row" colspan="6">Всего выплачено · '+html(group.name)+'</th><td><strong>'+money(group.amountCents)+'</strong></td></tr></tfoot></table></div></details></section>';
     }).join('');
@@ -132,7 +140,7 @@
   }
   function filterChoices(data) {
     var rows=data.operations.filter(function(row){return row.needsReview||row.acceptedBefore>0;});
-    (data.payments||[]).forEach(function(batch){rows=rows.concat(batch.entries||[]);});
+    rows=rows.concat(receipts(data).entries);
     function names(field){return Array.from(new Set(rows.map(function(row){return row[field];}).filter(function(value){return typeof value==='string'&&value.trim();}))).sort(function(a,b){return a.localeCompare(b,'ru');});}
     return {sewer:names('sewerName'),model:names('model')};
   }
@@ -181,13 +189,17 @@
       var report=build(state.data,{ sewer:el('sewer').value,model:el('model').value,mode:el('mode').value });state.report=report;
       state.receipt=receipts(state.data,{sewer:el('sewer').value,model:el('model').value});
       var saved=state.receipt,history='';
-      if(saved.entries.length){
+      if(saved.issues.length){
+        history='<div class="card" role="alert"><h3>Состав выплаты требует проверки</h3><p>Не удалось подтвердить всю историю оплаты. Сумму выплаты не показываю как окончательную.</p>'+saved.issues.map(function(issue){return'<p>'+html(issue.message)+'</p>';}).join('')+'</div>';
+      }else if(saved.entries.length){
         history='<div class="card"><h3>✅ Сохранённая выплата '+date(report.paymentDate)+'</h3><p><strong>Выплачено по ведомости: '+money(saved.amountCents)+' ₽ · Строк операций: '+saved.entries.length+'</strong></p>'+
-          '<p class="payroll-note">Суммы по выбранным швее и модели. Количество суммируется по операциям: одно изделие может учитываться в нескольких операциях. Расчёт использует количество и расценки, сохранённые при отметке выплаты.</p>'+
+          (saved.reversedAmountCents?'<p>Отметки оплаты: '+money(saved.paidAmountCents)+' ₽ · Отмены отметок: '+money(saved.reversedAmountCents)+' ₽ · Итог учёта: '+money(saved.amountCents)+' ₽. Отмена отметки не подтверждает возврат денег.</p>':'')+
+          '<p class="payroll-note">Учитываются обычные отметки оплаты за выбранный день и восстановленные выплаты с этой датой. Ранее оплаченные количества повторно не входят в сумму. Для старых отметок расценка берётся из операции пачки, где она фиксируется при выдаче. Количество суммируется по операциям, а не по готовым изделиям.</p>'+
           receiptSummaryHtml(saved,!!el('sewer').value)+
           '<button class="action-btn btn-secondary" onclick="exportRecordedPayrollRecovery()">📥 Скачать состав сохранённой выплаты</button><p class="payroll-note">Эти суммы уже внесены в учёт. Выгрузка содержит каждый паспорт, операцию, оплаченное количество и расценку. Дата выплаты и дата внесения записи показаны отдельно.</p></div>';
-      }el('history').innerHTML=history;
-      var h='<div class="card"><h3>Выплата '+date(report.paymentDate)+'</h3><p><strong>Не отмечено в учёте: '+money(report.totals.amountCents)+' ₽</strong></p><p>Операций к восстановлению: '+report.totals.operationCount+'. Требуют отдельной проверки: '+report.totals.reviewCount+'.</p><p class="payroll-note">Сумма по выбранным фильтрам. Количество показано по операциям, а не по готовым изделиям. Сверьте суммы с фактически выданной зарплатой.</p></div>';
+      }else history='<div class="card"><h3>Отмеченная выплата '+date(report.paymentDate)+'</h3><p>По выбранным швее и модели записей оплаты за этот день нет. Это не подтверждает, что зарплату не выдавали.</p></div>';
+      el('history').innerHTML=history;
+      var h='<div class="card"><h3>Проверка пропущенных отметок на '+date(report.paymentDate)+'</h3><p><strong>Не отмечено в учёте: '+money(report.totals.amountCents)+' ₽</strong></p><p>Операций к восстановлению: '+report.totals.operationCount+'. Требуют отдельной проверки: '+report.totals.reviewCount+'.</p><p class="payroll-note">Это сумма пропущенных отметок, а не сумма выплаченной зарплаты. Сохранённая выплата показана выше. Количество учитывается по операциям.</p></div>';
       report.groups.forEach(function (g) {
         h+='<div class="card"><strong>'+html(g.name)+' — '+money(g.amountCents)+' ₽</strong><p>Принято к дате: '+g.beforeQty+' · Уже учтено: '+g.coveredQty+' · Добавить: '+g.addQty+'</p><p>Операций к отметке: '+g.operationCount+(g.reviewCount?' · Проверить: '+g.reviewCount:'')+'</p></div>';
       });
@@ -247,7 +259,7 @@
     a.href=url;a.download='Сверка_выплаты_'+state.report.paymentDate+'.csv';root.document.body.appendChild(a);a.click();a.remove();root.setTimeout(function () { root.URL.revokeObjectURL(url); },1000);
   }
   function exportRecorded(){
-    if(!allowed()||!state.receipt||!state.receipt.entries.length)return;
+    if(!allowed()||!state.receipt||!state.receipt.entries.length||state.receipt.issues.length)return;
     var blob=new Blob(['\uFEFF'+receiptCsv(state.receipt)],{type:'text/csv;charset=utf-8;'}),url=root.URL.createObjectURL(blob),a=root.document.createElement('a');
     a.href=url;a.download='Сохранённая_выплата_'+state.data.paymentDate+'.csv';root.document.body.appendChild(a);a.click();a.remove();root.setTimeout(function(){root.URL.revokeObjectURL(url);},1000);
   }
